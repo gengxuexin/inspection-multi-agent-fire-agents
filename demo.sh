@@ -14,6 +14,16 @@ echo "=========================================="
 echo
 
 # ---------- 用例 1：法规查询 ----------
+#!/bin/bash
+cd ~/fire_agent_v2/fire_agents
+source ~/.venv/bin/activate
+unset DEEPSEEK_API_KEY
+
+TOKEN=$(curl -s -X POST http://localhost:8000/auth/token -H "Content-Type: application/json" -d '{"sub":"张三","dept":"消防支队","role":"officer","clearance":2}' | python -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
+echo "Token: ${TOKEN:0:20}..."
+
+curl -s http://localhost:8000/dispatch -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"query":"消防法第六十条的处罚标准","conversation_id":"demo-1"}' | python -m json.tool
+
 case_1() {
     echo "【演示 1】法规智能问答"
     echo "问题：消防法第六十条内容是什么？"

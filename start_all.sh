@@ -7,7 +7,7 @@
 #   ./start_all.sh stop               停止所有服务
 #   ./start_all.sh status             查看状态
 #   ./start_all.sh restart            重启
-
+unset DEEPSEEK_API_KEY
 set -euo pipefail
 
 # ==================== 配置 ====================
