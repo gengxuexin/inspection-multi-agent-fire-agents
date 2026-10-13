@@ -1,6 +1,9 @@
 """
-消防法律智能助手 - 统一入口
+消防法律智能助手 - Streamlit 交互界面
 文件分析 · 模板驱动文书生成（含 RAG 法律推理）· RAG 法律问答
+
+运行：streamlit run agent1/ui/app.py
+注意：本文件位于 agent1/ui/，所有 agent1 级资源路径均相对 AGENT_DIR 解析。
 """
 import os
 import sys
@@ -10,13 +13,15 @@ import tempfile
 import zipfile
 from datetime import datetime
 from io import BytesIO
-from field_resolver import FieldKind
 import streamlit as st
 from docx import Document
 
-_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-if _SCRIPT_DIR not in sys.path:
-    sys.path.insert(0, _SCRIPT_DIR)
+_UI_DIR = os.path.dirname(os.path.abspath(__file__))
+AGENT_DIR = os.path.dirname(_UI_DIR)
+ROOT_DIR = os.path.dirname(AGENT_DIR)
+for _p in (AGENT_DIR, ROOT_DIR):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 from config import set_deepseek, set_embedding, get_deepseek, get_embedding_config
 from document_io import fill_table_cells, fill_paragraph_placeholders
@@ -27,6 +32,7 @@ from case_field_matcher import (
     extract_fields_from_case, verify_extraction, build_review_table,
 )
 from rag_legal_advisor import split_fields, is_legal_field
+from field_resolver import FieldKind
 
 
 # ==================== 页面配置 ====================
@@ -41,18 +47,18 @@ st.markdown("""
 <style>
 .block-container {padding-top: 2rem; padding-bottom: 3rem;}
 h1 {font-weight: 600; letter-spacing: -0.5px;}
-.stTabs [data-baseweb="tab"] {padding: 12px 24px; font-weight: 500;}
+.stTabs [data-tabbaseweb="tab"] {padding: 12px 24px; font-weight: 500;}
 .stButton>button {border-radius: 6px; font-weight: 500;}
 </style>
 """, unsafe_allow_html=True)
 
 
 # ==================== 常量 ====================
-OUTPUT_DIR = os.path.join(_SCRIPT_DIR, "output")
+OUTPUT_DIR = os.path.join(AGENT_DIR, "output")
 INDEX_DIRS = {
-    "single": os.path.join(_SCRIPT_DIR, "faiss_single"),
-    "multi":  os.path.join(_SCRIPT_DIR, "faiss_multi"),
-    "full":   os.path.join(_SCRIPT_DIR, "faiss_full"),
+    "single": os.path.join(AGENT_DIR, "faiss_single"),
+    "multi":  os.path.join(AGENT_DIR, "faiss_multi"),
+    "full":   os.path.join(AGENT_DIR, "faiss_full"),
 }
 
 

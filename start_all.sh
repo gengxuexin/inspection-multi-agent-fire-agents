@@ -138,7 +138,7 @@ do_start() {
     echo
 
     # 编排模式
-    local mode="${ORCHESTRATOR_MODE:-legacy}"
+    local mode="${ORCHESTRATOR_MODE:-langgraph}"
     echo "  📋 编排模式: $mode"
     if [ "$mode" = "langgraph" ]; then
         echo "  ℹ️  LangGraph 编排已启用（需安装 langgraph）"
@@ -234,7 +234,7 @@ do_status() {
         echo "  ℹ️  Milvus: 未配置（FAISS 回退）"
     fi
     # 编排模式
-    echo "  ℹ️  编排模式: ${ORCHESTRATOR_MODE:-legacy}"
+    echo "  ℹ️  编排模式: ${ORCHESTRATOR_MODE:-langgraph}"
 }
 
 # ==================== 主入口 ====================

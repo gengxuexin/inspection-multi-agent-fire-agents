@@ -61,7 +61,7 @@ class Settings(BaseSettings):
     budget_max_cost: float = 10.0
 
     # ---- 编排与路由（P2/P7）----
-    orchestrator_mode: str = "legacy"     # legacy | langgraph
+    orchestrator_mode: str = "langgraph"  # langgraph（生产默认） | legacy
     classifier_conf_threshold: float = 0.6
     route_max_hops: int = 3
 

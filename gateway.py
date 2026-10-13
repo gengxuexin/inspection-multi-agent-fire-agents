@@ -16,7 +16,7 @@ import os
 import sys
 import asyncio
 import json
-import traceback
+import logging
 import time
 
 _ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -42,6 +42,8 @@ from common.tasks import get_task_store, new_task_id
 from common.tracing import setup_tracing, trace_span
 
 app = FastAPI(title="Fire Agent Gateway")
+
+logger = logging.getLogger("fire_agents.gateway")
 
 # 挂载审计中间件 + OpenTelemetry tracing
 install_audit_middleware(app)
@@ -242,7 +244,7 @@ async def dispatch(req: DispatchReq, user: UserCtx = Depends(get_current_user)):
     except CircuitOpenError as e:
         return {"status": "error", "message": str(e)}
     except Exception as e:
-        traceback.print_exc()
+        logger.exception("[gateway] 请求处理异常")
         return {"status": "error", "message": f"{type(e).__name__}: {e}"}
 
 
@@ -297,7 +299,7 @@ async def dispatch_file(
     except CircuitOpenError as e:
         return {"status": "error", "message": str(e)}
     except Exception as e:
-        traceback.print_exc()
+        logger.exception("[gateway] 请求处理异常")
         return {"status": "error", "message": f"{type(e).__name__}: {e}"}
 
 
@@ -368,18 +370,45 @@ async def task_events(task_id: str,
 
 
 # ==================== 多模态综合处理 ====================
-from multimodal_orchestrator import orchestrate
+def _resolve_orchestrator():
+    """按 ORCHESTRATOR_MODE 选择编排器实现。
+
+    统一入口签名：orchestrate(file_paths, template_path, user_query, conversation_id) -> dict
+
+    - langgraph（默认，生产）：orchestrator_langgraph.orchestrate
+    - legacy：multimodal_orchestrator.orchestrate（仅当 langgraph 不可用时回退）
+    """
+    settings = get_settings()
+    mode = (settings.orchestrator_mode or "langgraph").lower()
+
+    if mode == "legacy":
+        try:
+            from multimodal_orchestrator import orchestrate as legacy_orchestrate
+            return legacy_orchestrate, "legacy"
+        except ImportError:
+            logger.warning("[orchestrator] legacy 模式不可用，回退 langgraph")
+
+    from orchestrator_langgraph import orchestrate as lg_orchestrate, is_available
+    if not is_available():
+        raise RuntimeError(
+            "ORCHESTRATOR_MODE=langgraph 但 langgraph 未安装，"
+            "请执行 pip install 'langgraph>=0.2' 'langgraph-checkpoint-sqlite>=2.0'"
+        )
+    return lg_orchestrate, "langgraph"
+
 
 @app.post("/dispatch_multimodal")
 async def dispatch_multimodal(
     files: List[UploadFile] = File(default=[]),
     template_file: UploadFile = File(default=None),
     query: str = Form(""),
+    conversation_id: str = Form(""),
     user: UserCtx = Depends(get_current_user),
 ):
     """多模态入口：上传任意文件，自动分发+综合+生成。"""
+    orchestrate, mode = _resolve_orchestrator()
+    tmp_dir = tempfile.mkdtemp()
     try:
-        tmp_dir = tempfile.mkdtemp()
         tmp_paths = []
         template_path = None
 
@@ -394,16 +423,17 @@ async def dispatch_multimodal(
             with open(template_path, "wb") as fp:
                 shutil.copyfileobj(template_file.file, fp)
 
-        result = await orchestrate(tmp_paths, template_path, query)
+        result = await orchestrate(tmp_paths, template_path, query, conversation_id)
 
-        shutil.rmtree(tmp_dir, ignore_errors=True)
         audit_event("dispatch_multimodal", user=user,
-                    files=len(tmp_paths), query=query[:100])
-        return {"status": "success", **result}
+                    files=len(tmp_paths), query=query[:100], orchestrator=mode)
+        return {"status": "success", "orchestrator": mode, **result}
 
     except Exception as e:
-        traceback.print_exc()
+        logger.exception("[dispatch_multimodal] 失败")
         return {"status": "error", "message": f"{type(e).__name__}: {e}"}
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":

@@ -36,7 +36,7 @@ from rag_module import rag_ask
 from rag_legal_advisor import (
     retrieve_legal_context, extract_legal_fields_from_case,
 )
-from agent2_main import (
+from case_pipeline import (
     generate_one, TEMPLATE_DIR, OUTPUT_DIR, CASE as DEFAULT_CASE,
 )
 from pdf_converter import docx_to_pdf
