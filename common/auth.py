@@ -8,6 +8,7 @@
     async def secure(user: UserCtx = Depends(get_current_user)):
         ...
 """
+import hmac
 import logging
 import time
 
@@ -48,6 +49,12 @@ def create_token(
     settings = get_settings()
     if not settings.jwt_secret:
         raise RuntimeError("JWT_SECRET 未配置")
+    if not sub or not str(sub).strip():
+        raise ValueError("sub（用户标识）不能为空")
+    if not isinstance(clearance, int) or not (0 <= clearance <= max(CLEARANCE_LEVELS)):
+        raise ValueError(
+            f"clearance 必须是 0-{max(CLEARANCE_LEVELS)} 的整数，收到 {clearance!r}"
+        )
     now = int(time.time())
     ttl_min = settings.jwt_expire_min if expires_min is None else expires_min
     payload = {
@@ -140,6 +147,15 @@ async def get_current_user(request: Request) -> UserCtx:
         clearance = int(claims.get("clearance", 2))
     except (TypeError, ValueError):
         clearance = 2
+    # 越界值收敛到合法区间，防止伪造超权 clearance 绕过文档级权限过滤
+    if clearance < 0:
+        clearance = 0
+    elif clearance > max(CLEARANCE_LEVELS):
+        clearance = max(CLEARANCE_LEVELS)
+        logger.warning(
+            "[auth] clearance 越界已收敛 sub=%s -> %d",
+            claims.get("sub"), clearance,
+        )
 
     ctx = UserCtx(
         sub=str(claims.get("sub") or "anonymous"),
@@ -157,14 +173,24 @@ async def require_internal_token(request: Request) -> None:
     - 根路径（健康检查）放行；
     - settings.agent_shared_token 为空时视为未启用，放行；
     - 否则请求头 X-Internal-Token 必须与配置一致，不匹配返回 401。
+
+    安全说明：使用 hmac.compare_digest 做常数时间比较，避免时序侧信道
+    （普通字符串比较会因首个差异字节的位置泄漏信息）。
     """
     if request.url.path == "/":
         return
     settings = get_settings()
-    if not settings.agent_shared_token:
+    expected = settings.agent_shared_token
+    if not expected:
         return
     provided = request.headers.get("X-Internal-Token", "")
-    if provided != settings.agent_shared_token:
+    # 常数时间比较，长度不一致时 compare_digest 同样返回 False
+    if not hmac.compare_digest(provided.encode("utf-8"), expected.encode("utf-8")):
+        logger.warning(
+            "[auth] 内部调用校验失败 path=%s remote=%s",
+            request.url.path,
+            request.client.host if request.client else "unknown",
+        )
         raise HTTPException(
             status_code=401,
             detail="内部调用校验失败：X-Internal-Token 缺失或不匹配",
