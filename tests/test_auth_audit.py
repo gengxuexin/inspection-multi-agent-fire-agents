@@ -41,8 +41,11 @@ except ImportError:
 
 @pytest.fixture()
 def auth_env(monkeypatch):
-    """设置 JWT 相关环境变量并清理 get_settings 缓存（teardown 再清一次）。"""
-    monkeypatch.setenv("JWT_SECRET", "unit-test-secret")
+    """设置 JWT 相关环境变量并清理 get_settings 缓存（teardown 再清一次）。
+
+    密钥长度 >= 32 字节，满足 RFC 7518 对 HMAC-SHA256 的推荐下限。
+    """
+    monkeypatch.setenv("JWT_SECRET", "unit-test-secret-key-at-least-32-bytes-long")
     monkeypatch.setenv("JWT_ISSUER", "test-issuer")
     monkeypatch.setenv("JWT_AUDIENCE", "test-audience")
     monkeypatch.setenv("JWT_EXPIRE_MIN", "60")
@@ -247,3 +250,43 @@ def test_audit_event(auth_env, tmp_path):
     assert rec["sub"] == "lisi"
     assert "138****5678" in rec["note"]
     assert "13812345678" not in rec["note"]
+
+# ---------------- 签发入参校验 ----------------
+
+
+def test_create_token_rejects_short_secret(monkeypatch):
+    """HS256 密钥短于 32 字节应拒绝签发（RFC 7518 §3.2）。"""
+    monkeypatch.setenv("JWT_SECRET", "too-short")
+    monkeypatch.setenv("JWT_ISSUER", "test-issuer")
+    monkeypatch.setenv("JWT_AUDIENCE", "test-audience")
+    get_settings.cache_clear()
+    try:
+        with pytest.raises(RuntimeError, match="长度不足"):
+            create_token(sub="u1")
+    finally:
+        get_settings.cache_clear()
+
+
+def test_create_token_rejects_empty_sub(auth_env):
+    with pytest.raises(ValueError, match="sub"):
+        create_token(sub="   ")
+
+
+def test_create_token_rejects_out_of_range_clearance(auth_env):
+    with pytest.raises(ValueError, match="clearance"):
+        create_token(sub="u1", clearance=99)
+
+
+def test_create_token_accepts_boundary_clearance(auth_env):
+    for level in (0, 4):
+        token = create_token(sub="u1", clearance=level)
+        assert verify_token(token)["clearance"] == level
+
+
+def test_internal_token_uses_constant_time_compare(auth_env):
+    """内部 Token 校验应走 hmac.compare_digest，避免时序侧信道。"""
+    import inspect
+    from common import auth as auth_mod
+
+    src = inspect.getsource(auth_mod.require_internal_token)
+    assert "compare_digest" in src, "内部 Token 比较必须使用常数时间函数"

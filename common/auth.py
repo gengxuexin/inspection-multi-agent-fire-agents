@@ -49,6 +49,13 @@ def create_token(
     settings = get_settings()
     if not settings.jwt_secret:
         raise RuntimeError("JWT_SECRET 未配置")
+    if settings.jwt_algorithm.startswith("HS"):
+        # RFC 7518 §3.2：HMAC-SHA256 密钥不应短于其哈希输出（32 字节）
+        if len(settings.jwt_secret.encode("utf-8")) < 32:
+            raise RuntimeError(
+                f"JWT_SECRET 长度不足（需 >= 32 字节，当前 {len(settings.jwt_secret)} 字节），"
+                "请使用 python -c \"import secrets; print(secrets.token_urlsafe(48))\" 重新生成"
+            )
     if not sub or not str(sub).strip():
         raise ValueError("sub（用户标识）不能为空")
     if not isinstance(clearance, int) or not (0 <= clearance <= max(CLEARANCE_LEVELS)):
