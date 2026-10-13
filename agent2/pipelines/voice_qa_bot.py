@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """
+logger = logging.getLogger("fire_agents.agent2")
+
 消防语音问答机器人
 ASR: asr/whisper_engine.py
 LLM: llm/ollama_client.py
@@ -14,12 +16,13 @@ from config import OUT_VOICE_BOT, TTS_VOICE_EDGE, TTS_EMOTION
 from asr.whisper_engine import WhisperEngine
 from llm.ollama_client import ask_fire_bot
 from tts.edge_engine import synthesize, EMOTION_PRESETS
+import logging
 
 
 # ============ 单例加载 Whisper ============
-print("⏳ 初始化 Whisper 引擎...")
+logger.info("⏳ 初始化 Whisper 引擎...")
 whisper = WhisperEngine()
-print("✅ Whisper 引擎就绪")
+logger.info("✅ Whisper 引擎就绪")
 
 
 MAX_HISTORY = 6   # 最多保留 6 条消息（3 轮对话）
@@ -42,19 +45,19 @@ def text_to_speech(text, output_path, voice=None, emotion=None, retry=2):
         try:
             return synthesize(text, output_path, voice=voice, emotion=emotion)
         except Exception as e:
-            print(f"⚠️ [edge-tts] 第 {attempt+1} 次失败：{e}")
+            logger.error(f"⚠️ [edge-tts] 第 {attempt+1} 次失败：{e}")
             if attempt < retry:
                 time.sleep(1)
 
     # 降级：pyttsx3
-    print("⚠️ edge-tts 全部失败，降级到 pyttsx3")
+    logger.error("⚠️ edge-tts 全部失败，降级到 pyttsx3")
     try:
         from tts.pyttsx3_engine import text_to_speech_pyttsx3
         wav_path = os.path.splitext(output_path)[0] + ".wav"
         text_to_speech_pyttsx3(text, wav_path)
         return wav_path
     except Exception as e:
-        print(f"❌ [pyttsx3] 也失败：{e}")
+        logger.error(f"❌ [pyttsx3] 也失败：{e}")
         return None
 
 
@@ -91,7 +94,7 @@ def voice_qa_pipeline(audio_path, chat_history, voice_choice, emotion_choice):
                                 voice=voice_choice, emotion=emotion_choice)
     t_tts = time.time() - t0
 
-    print(f"⏱️ ASR {t_asr:.1f}s | LLM {t_llm:.1f}s | TTS {t_tts:.1f}s")
+    logger.info(f"⏱️ ASR {t_asr:.1f}s | LLM {t_llm:.1f}s | TTS {t_tts:.1f}s")
 
     # 4. 追加对话
     chat_history.append({"role": "user", "content": user_text})
@@ -171,9 +174,9 @@ if __name__ == "__main__":
     import requests
     try:
         requests.get("http://localhost:11434/api/tags", timeout=3)
-        print("✅ Ollama 服务正常")
+        logger.info("✅ Ollama 服务正常")
     except Exception:
-        print("⚠️ 无法连接 Ollama，请先启动 Ollama")
+        logger.info("⚠️ 无法连接 Ollama，请先启动 Ollama")
 
     demo = create_ui()
     demo.launch(

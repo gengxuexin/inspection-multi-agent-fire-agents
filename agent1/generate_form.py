@@ -1,4 +1,6 @@
 """
+logger = logging.getLogger("fire_agents.agent1")
+
 通用表单文书生成器
 """
 import json
@@ -8,6 +10,7 @@ from docx import Document
 from config import ds_client
 from rag_module import rag_ask
 from document_io import fill_table_cells, fill_paragraph_placeholders
+import logging
 
 
 # 支持的所有复选框符号（含汉字"口"）
@@ -148,7 +151,7 @@ def generate_form_docx(case_context, template_path, output_path, field_schema):
     case_desc = case_context.get("case_context", "")
 
     # 1. LLM 抽字段
-    print(f"    [1/4] LLM 抽取 {len(field_schema)} 个字段...")
+    logger.info(f"    [1/4] LLM 抽取 {len(field_schema)} 个字段...")
     resp = ds_client.chat.completions.create(
         model="deepseek-chat",
         messages=[{"role": "user", "content": _build_extract_prompt(
@@ -164,7 +167,7 @@ def generate_form_docx(case_context, template_path, output_path, field_schema):
 
     # 3. RAG 补法律依据
     if "法律依据" in field_schema and not fields.get("法律依据"):
-        print(f"    [2/4] RAG 检索法律依据...")
+        logger.info(f"    [2/4] RAG 检索法律依据...")
         try:
             raw = rag_ask(f"针对以下违法行为应当依据哪条法规？只需给出完整的'《法规名》第X条'格式：{case_desc}")
             first_line = raw.split("\n")[0].strip()
@@ -176,13 +179,13 @@ def generate_form_docx(case_context, template_path, output_path, field_schema):
             )
             fields["法律依据"] = m.group(0) if m else first_line[:80]
         except Exception as e:
-            print(f"        ⚠️ RAG 失败：{e}")
+            logger.error(f"        ⚠️ RAG 失败：{e}")
     else:
-        print(f"    [2/4] 跳过 RAG")
+        logger.warning(f"    [2/4] 跳过 RAG")
 
     # 3.5 处罚决定为空时二次生成
     if "处罚决定" in field_schema and not fields.get("处罚决定"):
-        print(f"    [3/4] 生成处罚决定建议...")
+        logger.info(f"    [3/4] 生成处罚决定建议...")
         try:
             suggest = ds_client.chat.completions.create(
                 model="deepseek-chat",
@@ -196,12 +199,12 @@ def generate_form_docx(case_context, template_path, output_path, field_schema):
             )
             fields["处罚决定"] = suggest.choices[0].message.content.strip()
         except Exception as e:
-            print(f"        ⚠️ 处罚建议生成失败：{e}")
+            logger.error(f"        ⚠️ 处罚建议生成失败：{e}")
     else:
-        print(f"    [3/4] 跳过处罚建议")
+        logger.warning(f"    [3/4] 跳过处罚建议")
 
     # 4. 回填模板
-    print(f"    [4/4] 回填模板...")
+    logger.info(f"    [4/4] 回填模板...")
     doc = Document(template_path)
 
     mapping = {k: ("" if v is None else str(v)) for k, v in fields.items()}

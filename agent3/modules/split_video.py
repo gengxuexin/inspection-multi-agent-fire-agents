@@ -1,9 +1,12 @@
 # -*- coding: utf-8 -*-
 """
+logger = logging.getLogger("fire_agents.agent3")
+
 视频切分工具：将长视频按固定时长切成小段（Windows 兼容版）
 """
 import subprocess
 from pathlib import Path
+import logging
 
 
 def split_video(video_path, output_dir, segment_seconds=4):
@@ -24,8 +27,8 @@ def split_video(video_path, output_dir, segment_seconds=4):
     )
     total_duration = float(result.stdout.strip())
     expected = int(total_duration / segment_seconds) + 1
-    print(f"视频总时长：{total_duration:.1f} 秒")
-    print(f"每段 {segment_seconds} 秒，预计切分 {expected} 段")
+    logger.info(f"视频总时长：{total_duration:.1f} 秒")
+    logger.info(f"每段 {segment_seconds} 秒，预计切分 {expected} 段")
 
     # ---- 2. ffmpeg 切分（重新编码，精确切分）----
     output_pattern = str(output_dir / "segment_%03d.mp4")
@@ -48,7 +51,7 @@ def split_video(video_path, output_dir, segment_seconds=4):
 
     # 收集切分结果
     segments = sorted(output_dir.glob("segment_*.mp4"))
-    print(f"切分完成，共 {len(segments)} 段\n")
+    logger.info(f"切分完成，共 {len(segments)} 段\n")
     return [str(s) for s in segments]
 
 
@@ -56,4 +59,4 @@ if __name__ == "__main__":
     video = r"D:\AI\ollama_deepseek\Agent4-图片和视频处理器\input\4.mp4"
     segs = split_video(video, r"D:\AI\ollama_deepseek\Agent4-图片和视频处理器\output\4\video_segments", segment_seconds=4)
     for s in segs:
-        print(s)
+        logger.info(s)

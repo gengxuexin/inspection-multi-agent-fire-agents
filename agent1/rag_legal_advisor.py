@@ -1,4 +1,6 @@
 """
+logger = logging.getLogger("fire_agents.agent1")
+
 法律推理模块：用本地 RAG 知识库为"法律依据 / 违法事实 / 触犯条款 / 定性"类字段生成答案。
 
 流程：
@@ -9,6 +11,7 @@
 import json
 import re
 from config import ds_client
+import logging
 
 
 # ==================== 字段分类 ====================
@@ -77,10 +80,10 @@ def retrieve_legal_context(case_text: str, top_k: int = 8) -> list:
             })
         return result
     except FileNotFoundError as e:
-        print(f"[rag_legal_advisor] 向量库不存在：{e}")
+        logger.info(f"[rag_legal_advisor] 向量库不存在：{e}")
         return []
     except Exception as e:
-        print(f"[rag_legal_advisor] RAG 检索失败：{e}")
+        logger.error(f"[rag_legal_advisor] RAG 检索失败：{e}")
         return []
 
 
@@ -152,7 +155,7 @@ def extract_legal_fields_from_case(
     # 1. RAG 检索
     snippets = retrieve_legal_context(case_text, top_k=top_k)
     if not snippets:
-        print("[rag_legal_advisor] 无检索结果，法律字段将返回空值")
+        logger.info("[rag_legal_advisor] 无检索结果，法律字段将返回空值")
         return {
             f["key"]: {
                 "value": None,

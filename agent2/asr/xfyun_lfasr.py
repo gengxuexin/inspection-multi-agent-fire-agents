@@ -10,7 +10,10 @@ import subprocess
 import requests
 
 from config import LFASR_APP_ID, LFASR_SECRET_KEY, LFASR_HOT_WORDS
+import logging
 
+
+logger = logging.getLogger("fire_agents.agent2")
 
 class LFASRClient:
 
@@ -70,7 +73,7 @@ class LFASRClient:
         """上传音频到 LFASR 服务"""
         duration_ms = self._get_duration(audio_path)
         clean_hotwords = self._clean_hotwords(LFASR_HOT_WORDS)
-        print(f"[LFASR] 热词：{clean_hotwords or '(无)'}")
+        logger.info(f"[LFASR] 热词：{clean_hotwords or '(无)'}")
 
         params = {
             "appId": self.app_id,
@@ -107,8 +110,8 @@ class LFASRClient:
             if data.get("content", {}).get("orderInfo", {}).get(
                     "status") == 4:
                 return data
-            print(f"[LFASR] 识别中... 状态："
-                  f"{data.get('content', {}).get('orderInfo', {}).get('status')}")
+            logger.info("[LFASR] 识别中... 状态：%s",
+                         data.get("content", {}).get("orderInfo", {}).get("status"))
             time.sleep(3)
 
     # ---------- 解析结果 ----------
@@ -125,7 +128,7 @@ class LFASRClient:
                     words.append(text)
             return "".join(words)
         except Exception as e:
-            print(f"[LFASR] 解析异常：{e}")
+            logger.error(f"[LFASR] 解析异常：{e}")
             return ""
 
     def _extract_text_from_1best(self, item):
@@ -146,29 +149,28 @@ class LFASRClient:
     def recognize(self, audio_path):
         """完整流程：上传 → 轮询 → 解析"""
         if not os.path.exists(audio_path):
-            print(f"❌ 找不到音频：{audio_path}")
+            logger.info(f"❌ 找不到音频：{audio_path}")
             return None
 
-        print(f"[LFASR] 上传：{audio_path}")
+        logger.info(f"[LFASR] 上传：{audio_path}")
         upload_resp = self.upload(audio_path)
         if upload_resp.get("code") != "0":
-            print(f"❌ 上传失败：{upload_resp}")
+            logger.error(f"❌ 上传失败：{upload_resp}")
             return None
 
         task_id = upload_resp["content"]["orderId"]
-        print(f"[LFASR] 任务 ID：{task_id}")
+        logger.info(f"[LFASR] 任务 ID：{task_id}")
 
         result = self.get_result(task_id)
         text = self._parse_result(result)
-        print(f"[LFASR] 识别结果：{text[:200]}"
-              f"{'...' if len(text) > 200 else ''}")
+        logger.info("[LFASR] 识别结果：%s", text[:200] + ("..." if len(text) > 200 else ""))
         return {"text": text}
 
 
 if __name__ == "__main__":
     import sys
     if len(sys.argv) < 2:
-        print("用法：python -m asr.xfyun_lfasr <音频路径>")
+        logger.info("用法：python -m asr.xfyun_lfasr <音频路径>")
         sys.exit(1)
     client = LFASRClient()
-    print(client.recognize(sys.argv[1]))
+    logger.info(client.recognize(sys.argv[1]))

@@ -1,4 +1,6 @@
 """
+logger = logging.getLogger("fire_agents.agent1")
+
 案情 × 模板字段 匹配。三级分流：
 - FACT    从案情明文抽
 - LEGAL   RAG 检索本地知识库
@@ -95,7 +97,7 @@ def extract_fields_from_case(
                 EXTRACT_PROMPT, case_text=case_text, fields_json=payload,
             ))
         except Exception as e:
-            print(f"[case_field_matcher] 事实类抽取失败：{e}")
+            logger.error(f"[case_field_matcher] 事实类抽取失败：{e}")
 
     # 2. 法律类：RAG
     legal_fields = groups[FieldKind.LEGAL]
@@ -117,7 +119,7 @@ def extract_fields_from_case(
                 legal_result = extract_legal_fields_from_case(case_text, legal_basis_fields)
                 result.update(legal_result)
             except Exception as e:
-                print(f"[case_field_matcher] 法律依据抽取失败：{e}")
+                logger.error(f"[case_field_matcher] 法律依据抽取失败：{e}")
 
         # 2b. 处罚决定类：依赖法律依据生成
         if penalty_fields:
@@ -221,3 +223,4 @@ def build_review_table(fields: list, extracted: dict, verified: dict,
 
 # 从 field_resolver 导入，供 app.py 使用
 from field_resolver import classify_field
+import logging

@@ -1,5 +1,7 @@
 # ~/fire_agents/multimodal_orchestrator.py
 """
+logger = logging.getLogger("fire_agents")
+
 多模态编排器
 - 接收多个文件
 - 按类型分发到对应 Agent
@@ -14,6 +16,7 @@ import tempfile
 import shutil
 import asyncio
 import traceback
+import logging
 
 AGENT1 = "http://127.0.0.1:8001"
 AGENT2 = "http://127.0.0.1:8002"
@@ -155,8 +158,8 @@ async def orchestrate(file_paths, template_path=None, user_query=""):
     
     # 1. 分类文件
     grouped = classify_files(file_paths)
-    print(f"[Orchestrator] 分类结果：vision={len(grouped['vision'])} "
-          f"voice={len(grouped['voice'])} doc={len(grouped['doc'])}")
+    logger.info("[Orchestrator] 分类结果：vision=%d voice=%d doc=%d",
+                 len(grouped["vision"]), len(grouped["voice"]), len(grouped["doc"]))
 
     # 2. 并行调用各 Agent
     async with httpx.AsyncClient(trust_env=False) as client:
@@ -186,7 +189,7 @@ async def orchestrate(file_paths, template_path=None, user_query=""):
 
     # 4. 综合案情
     case_summary = await synthesize_case(vision_results, voice_results, doc_results)
-    print(f"[Orchestrator] 案情综合完成，长度 {len(case_summary)}")
+    logger.info(f"[Orchestrator] 案情综合完成，长度 {len(case_summary)}")
     
     # 5. 用 agent1 抽结构化字段
     case_dict = {"case_context": case_summary, "case_id": "auto_" + str(int(time.time()))}
@@ -195,7 +198,7 @@ async def orchestrate(file_paths, template_path=None, user_query=""):
     docx_path = None
     # ★ 只处理 .docx 模板
     if not template_path.lower().endswith(".docx"):
-        print(f"[Orchestrator] ⚠️ 模板必须是 docx，跳过：{template_path}")
+        logger.warning(f"[Orchestrator] ⚠️ 模板必须是 docx，跳过：{template_path}")
     else:
         try:
             with open(template_path, "rb") as tf:
@@ -210,7 +213,7 @@ async def orchestrate(file_paths, template_path=None, user_query=""):
                     if doc_result.get("status") == "success":
                         docx_path = doc_result.get("docx")
                     else:
-                        print(f"[Orchestrator] 文书生成失败：{doc_result}")
+                        logger.error(f"[Orchestrator] 文书生成失败：{doc_result}")
         except Exception as e:
             traceback.print_exc()
     # 7. 生成 Markdown 案情报告

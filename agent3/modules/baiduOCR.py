@@ -1,11 +1,14 @@
 # -*- coding: utf-8 -*-
 """
+logger = logging.getLogger("fire_agents.agent3")
+
 3.1.1 百度在线 OCR
 识别图片中的文字，提取酒店名称
 """
 import base64
 import requests
 from config import BAIDU_API_KEY, BAIDU_SECRET_KEY
+import logging
 
 
 # ========== 1. 获取Access Token ==========
@@ -47,7 +50,7 @@ def general_ocr(access_token, image_path):
     result = response.json()
 
     if "words_result" not in result:
-        print(f"识别失败：{result}")
+        logger.error(f"识别失败：{result}")
         return []
 
     return [item["words"] for item in result["words_result"]]
@@ -80,16 +83,16 @@ def main():
     image_path = r"D:\AI\ollama_deepseek\Agent4-图片和视频处理器\input\酒店外观_4.jpg"
 
     token = get_access_token()
-    print("Access Token 获取成功")
+    logger.info("Access Token 获取成功")
 
     texts = general_ocr(token, image_path)
-    print(f"\n===== OCR识别结果（共{len(texts)}条）=====")
+    logger.info(f"\n===== OCR识别结果（共{len(texts)}条）=====")
     for i, t in enumerate(texts, 1):
-        print(f"  [{i}] {t}")
+        logger.info(f"  [{i}] {t}")
 
     hotel_name = extract_hotel_name(texts)
-    print(f"\n===== 提取结果 =====")
-    print(f"酒店名称：{hotel_name}")
+    logger.info(f"\n===== 提取结果 =====")
+    logger.info(f"酒店名称：{hotel_name}")
 
     return hotel_name
 

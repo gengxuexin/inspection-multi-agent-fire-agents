@@ -4,6 +4,8 @@ import requests
 import os
 import subprocess
 
+logger = logging.getLogger("fire_agents.agent2")
+
 def _detect_ollama_url():
     env = os.getenv("OLLAMA_URL")
     if env:
@@ -19,6 +21,7 @@ def _detect_ollama_url():
         return "http://172.30.32.1:11434/api/chat"
 
 from config import OLLAMA_MODEL
+import logging
 OLLAMA_URL = _detect_ollama_url()
 
 
@@ -27,7 +30,7 @@ def refine_text_with_llm(raw_text):
     if not raw_text.strip():
         return raw_text
 
-    print("\n🧠 大模型语义梳理中...")
+    logger.info("\n🧠 大模型语义梳理中...")
     system_prompt = (
         "你是一个消防领域的语音识别纠错助手。接下来我会给你一段由语音识别生成的消防录音文本。"
         "任务是：\n"
@@ -51,12 +54,12 @@ def refine_text_with_llm(raw_text):
     try:
         resp = requests.post(OLLAMA_URL, json=payload, timeout=300)
         if resp.status_code != 200:
-            print(f"⚠️ HTTP {resp.status_code}，返回原文")
+            logger.info(f"⚠️ HTTP {resp.status_code}，返回原文")
             return raw_text
         result = resp.json()
         return result.get("message", {}).get("content", "").strip() or raw_text
     except Exception as e:
-        print(f"⚠️ 大模型调用失败（用原文）：{e}")
+        logger.error(f"⚠️ 大模型调用失败（用原文）：{e}")
         return raw_text
 
 

@@ -1,6 +1,8 @@
 # common/tracing.py
 """可观测性封装：OpenTelemetry Tracing + Langfuse LLM 调用日志。
 
+logger = logging.getLogger("fire_agents.tracing")
+
 设计原则：
 - 全部为可选依赖：opentelemetry / langfuse / fastapi 任一未安装或未配置时优雅降级为 no-op；
 - setup_tracing() 幂等（模块级 flag 防重复初始化），可在各服务入口重复调用；
@@ -16,6 +18,7 @@ from __future__ import annotations
 import functools
 import inspect
 from typing import Any, Callable, Optional
+import logging
 
 try:
     from common.config import get_settings
@@ -73,7 +76,7 @@ def setup_tracing(app=None, service_name: Optional[str] = None) -> bool:
     try:
         settings = get_settings()
     except Exception as exc:  # 配置层异常不阻断业务启动
-        print(f"[tracing] 读取配置失败，跳过 tracing 初始化: {exc}")
+        logger.error(f"[tracing] 读取配置失败，跳过 tracing 初始化: {exc}")
         _setup_ok = False
         return False
 
@@ -103,24 +106,24 @@ def setup_tracing(app=None, service_name: Optional[str] = None) -> bool:
                 if isinstance(app, FastAPI):
                     FastAPIInstrumentor.instrument_app(app)
             except Exception as exc:
-                print(f"[tracing] FastAPI 自动埋点失败(忽略): {exc}")
+                logger.error(f"[tracing] FastAPI 自动埋点失败(忽略): {exc}")
 
         # httpx 出站请求埋点（gateway 转发各 Agent 均走 httpx）
         try:
             from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
             HTTPXClientInstrumentor.instrument()
         except Exception as exc:
-            print(f"[tracing] httpx(同步) 自动埋点失败(忽略): {exc}")
+            logger.error(f"[tracing] httpx(同步) 自动埋点失败(忽略): {exc}")
         try:
             from opentelemetry.instrumentation.httpx import AsyncHTTPXClientInstrumentor
             AsyncHTTPXClientInstrumentor.instrument()
         except Exception as exc:
-            print(f"[tracing] httpx(异步) 自动埋点失败(忽略): {exc}")
+            logger.error(f"[tracing] httpx(异步) 自动埋点失败(忽略): {exc}")
 
         _setup_ok = True
         return True
     except Exception as exc:
-        print(f"[tracing] OpenTelemetry 初始化失败，已降级为无追踪模式: {exc}")
+        logger.error(f"[tracing] OpenTelemetry 初始化失败，已降级为无追踪模式: {exc}")
         _setup_ok = False
         return False
 
@@ -173,7 +176,7 @@ class LangfuseLogger:
         try:
             s = get_settings()
         except Exception as exc:
-            print(f"[tracing] 读取配置失败，Langfuse 未启用: {exc}")
+            logger.error(f"[tracing] 读取配置失败，Langfuse 未启用: {exc}")
             return
         public_key = getattr(s, "langfuse_public_key", "") or ""
         secret_key = getattr(s, "langfuse_secret_key", "") or ""
@@ -187,7 +190,7 @@ class LangfuseLogger:
             )
             self.enabled = True
         except Exception as exc:
-            print(f"[tracing] Langfuse 初始化失败(静默降级): {exc}")
+            logger.error(f"[tracing] Langfuse 初始化失败(静默降级): {exc}")
             self._client = None
 
     def log_llm_call(

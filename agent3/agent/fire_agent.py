@@ -29,7 +29,10 @@ from config import (
     BASE_URL, VLM_MODEL,
     INPUT_DIR, OUTPUT_DIR,
 )
+import logging
 
+
+logger = logging.getLogger("fire_agents.agent3.agent")
 
 class FireInspectionAgent:
     """消防检查 Agent"""
@@ -42,7 +45,7 @@ class FireInspectionAgent:
             try:
                 self.yolo = YoloDetector()
             except FileNotFoundError as e:
-                print(f"⚠️ YOLO 未加载（{e}），将跳过 3.2.1 检测")
+                logger.warning(f"⚠️ YOLO 未加载（{e}），将跳过 3.2.1 检测")
 
     # ========== 3.1.1 图片文字识别 ==========
     def analyze_image_text(self, image_path):
@@ -62,36 +65,36 @@ class FireInspectionAgent:
     def analyze_image(self, image_path, do_yolo=True, do_ocr=True):
         """对单张图片做综合分析"""
         image_path = Path(image_path)
-        print(f"\n{'='*60}")
-        print(f"分析图片：{image_path.name}")
-        print("=" * 60)
+        logger.info(f"\n{'='*60}")
+        logger.info(f"分析图片：{image_path.name}")
+        logger.info("=" * 60)
 
         result = {"source": str(image_path), "type": "image"}
 
         # 3.1.1 OCR
         if do_ocr:
-            print("\n▶ 3.1.1 在线 OCR...")
+            logger.info("\n▶ 3.1.1 在线 OCR...")
             try:
                 result["ocr"] = self.analyze_image_text(str(image_path))
-                print(f"  识别 {len(result['ocr'].get('ocr_texts', []))} 条文字")
-                print(f"  酒店名称：{result['ocr'].get('hotel_name', '')}")
+                logger.info(f"  识别 {len(result['ocr'].get('ocr_texts', []))} 条文字")
+                logger.info(f"  酒店名称：{result['ocr'].get('hotel_name', '')}")
             except Exception as e:
                 result["ocr"] = {"error": str(e)}
-                print(f"  ✗ OCR 失败：{e}")
+                logger.error(f"  ✗ OCR 失败：{e}")
 
         # 3.2.1 YOLO
         if do_yolo and self.yolo:
-            print("\n▶ 3.2.1 YOLO 检测...")
+            logger.info("\n▶ 3.2.1 YOLO 检测...")
             try:
                 result["yolo"] = self.yolo.detect(str(image_path))
-                print(f"  检测到 {result['yolo']['total_objects']} 个目标")
-                print(f"  分类：{result['yolo']['counts']}")
+                logger.info(f"  检测到 {result['yolo']['total_objects']} 个目标")
+                logger.info(f"  分类：{result['yolo']['counts']}")
             except Exception as e:
                 result["yolo"] = {"error": str(e)}
-                print(f"  ✗ YOLO 失败：{e}")
+                logger.error(f"  ✗ YOLO 失败：{e}")
 
         # 3.2.5 综合判断（传入图片路径，让 VLM 融合判断）
-        print("\n▶ 3.2.5 综合判断（VLM 融合版）...")
+        logger.info("\n▶ 3.2.5 综合判断（VLM 融合版）...")
         judgment = self.judge_agent.judge(
             yolo_result=result.get("yolo"),
             source_info=f"单张图片：{image_path.name}",
@@ -105,7 +108,7 @@ class FireInspectionAgent:
         out.parent.mkdir(parents=True, exist_ok=True)
         with open(out, "w", encoding="utf-8") as f:
             json.dump(result, f, ensure_ascii=False, indent=2)
-        print(f"\n✅ 结果已保存：{out}")
+        logger.info(f"\n✅ 结果已保存：{out}")
 
         return result
 
@@ -118,20 +121,20 @@ class FireInspectionAgent:
         out_dir = Path(OUTPUT_DIR) / stem
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        print(f"\n{'='*60}")
-        print(f"分析视频：{video_path.name}")
-        print("=" * 60)
+        logger.info(f"\n{'='*60}")
+        logger.info(f"分析视频：{video_path.name}")
+        logger.info("=" * 60)
 
         result = {"source": str(video_path), "type": "video"}
 
         # ---- 3.2.2 视频切分 + 分析 ----
-        print("\n▶ 3.2.2 视频切分与分析...")
+        logger.info("\n▶ 3.2.2 视频切分与分析...")
         seg_dir = out_dir / "video_segments"
         segments = split_video(str(video_path), str(seg_dir), segment_seconds)
 
         seg_results = []
         for i, seg in enumerate(segments):
-            print(f"  [{i+1}/{len(segments)}] {Path(seg).name}")
+            logger.info(f"  [{i+1}/{len(segments)}] {Path(seg).name}")
             ans = analyze_segment(self.client, seg)
             seg_results.append({"segment": Path(seg).name, "answer": ans})
 
@@ -155,10 +158,10 @@ class FireInspectionAgent:
             "details": seg_results,
             "summary": seg_summary,
         }
-        print(f"  ✅ 3.2.2 完成，共 {len(segments)} 段")
+        logger.info(f"  ✅ 3.2.2 完成，共 {len(segments)} 段")
 
         # ---- 3.2.3 抽帧 + 分析 ----
-        print("\n▶ 3.2.3 抽帧与分析...")
+        logger.info("\n▶ 3.2.3 抽帧与分析...")
         frame_dir = out_dir / "frames"
         frames = extract_frames(str(video_path), str(frame_dir), fps=fps)
 
@@ -191,12 +194,12 @@ class FireInspectionAgent:
             "details": frame_results,
             "summary": frame_summary,
         }
-        print(f"  ✅ 3.2.3 完成，共 {len(frames)} 帧")
+        logger.info(f"  ✅ 3.2.3 完成，共 {len(frames)} 帧")
 
         # ---- 3.2.1 YOLO（可选）----
         yolo_result = None
         if do_yolo and self.yolo:
-            print("\n▶ 3.2.1 YOLO 对抽帧图检测...")
+            logger.info("\n▶ 3.2.1 YOLO 对抽帧图检测...")
             yolo_counts = {}
             for f in frames[:20]:
                 r = self.yolo.detect(str(f))
@@ -206,10 +209,10 @@ class FireInspectionAgent:
                            "total_objects": sum(yolo_counts.values()),
                            "frames_analyzed": min(20, len(frames))}
             result["yolo"] = yolo_result
-            print(f"  ✅ YOLO 完成，检测：{yolo_counts}")
+            logger.info(f"  ✅ YOLO 完成，检测：{yolo_counts}")
 
         # ---- 3.2.5 综合判断 ----
-        print("\n▶ 3.2.5 综合判断...")
+        logger.info("\n▶ 3.2.5 综合判断...")
         judgment = self.judge_agent.judge(
             yolo_result=yolo_result,
             video_result=result["video_segments"],
@@ -223,7 +226,7 @@ class FireInspectionAgent:
         out_file = out_dir / "final_report.json"
         with open(out_file, "w", encoding="utf-8") as f:
             json.dump(result, f, ensure_ascii=False, indent=2)
-        print(f"\n✅ 完整报告已保存：{out_file}")
+        logger.info(f"\n✅ 完整报告已保存：{out_file}")
 
         return result
 

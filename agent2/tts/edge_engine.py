@@ -4,7 +4,10 @@ import asyncio
 import os
 import edge_tts
 from config import OUT_TTS
+import logging
 
+
+logger = logging.getLogger("fire_agents.agent2")
 
 RECOMMENDED_VOICES = {
     "晓晓（女声-温柔）":   "zh-CN-XiaoxiaoNeural",
@@ -34,9 +37,9 @@ async def _list_voices_async(locale_prefix="zh"):
 
 def list_chinese_voices():
     voices = asyncio.run(_list_voices_async("zh"))
-    print(f"📢 找到 {len(voices)} 个中文音色：\n")
+    logger.info(f"📢 找到 {len(voices)} 个中文音色：\n")
     for v in voices:
-        print(f"  {v['ShortName']:45s} | {v['Gender']:6s} | {v['Locale']}")
+        logger.info(f"  {v['ShortName']:45s} | {v['Gender']:6s} | {v['Locale']}")
     return voices
 
 
@@ -51,7 +54,7 @@ async def synthesize_async(text, output_path,
         text=text, voice=voice, rate=rate, pitch=pitch, volume=volume,
     )
     await communicate.save(output_path)
-    print(f"✅ 语音已保存：{output_path}")
+    logger.info(f"✅ 语音已保存：{output_path}")
     return output_path
 
 
@@ -62,8 +65,8 @@ def synthesize(text, output_path, voice="zh-CN-XiaoxiaoNeural",
     rate = rate if rate is not None else preset["rate"]
     pitch = pitch if pitch is not None else preset["pitch"]
     volume = volume if volume is not None else preset["volume"]
-    print(f"🎙️ 合成：voice={voice}, emotion={emotion}, "
-          f"rate={rate}, pitch={pitch}, volume={volume}")
+    logger.info("合成：voice=%s, emotion=%s, rate=%s, pitch=%s, volume=%s",
+                 voice, emotion, rate, pitch, volume)
     asyncio.run(synthesize_async(
         text, output_path, voice, rate, pitch, volume
     ))
@@ -92,11 +95,11 @@ class VoiceProfile:
             "pitch":  pitch  if pitch  is not None else preset["pitch"],
             "volume": volume if volume is not None else preset["volume"],
         }
-        print(f"✅ 已添加音色档案：{name}")
+        logger.info(f"✅ 已添加音色档案：{name}")
 
     def speak(self, speaker_name, text, output_path):
         if speaker_name not in self.profiles:
-            print(f"⚠️ 未找到档案 {speaker_name}，使用默认音色")
+            logger.info(f"⚠️ 未找到档案 {speaker_name}，使用默认音色")
             return synthesize(text, output_path)
         p = self.profiles[speaker_name]
         return synthesize(text, output_path, voice=p["voice"],
@@ -124,4 +127,4 @@ if __name__ == "__main__":
     vp.speak("报警人", "我们这里三楼着火了，有两个人被困！",
              os.path.join(OUT_TTS, "8_报警人.mp3"))
 
-    print(f"\n🎉 测试音频已生成到：{OUT_TTS}")
+    logger.info(f"\n🎉 测试音频已生成到：{OUT_TTS}")

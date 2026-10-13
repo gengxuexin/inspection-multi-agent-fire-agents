@@ -3,7 +3,10 @@
 import os
 import pyttsx3
 from config import OUT_TTS
+import logging
 
+
+logger = logging.getLogger("fire_agents.agent2")
 
 def text_to_speech_pyttsx3(text, output_path=None, rate=150, volume=0.9):
     engine = pyttsx3.init()
@@ -24,7 +27,7 @@ def text_to_speech_pyttsx3(text, output_path=None, rate=150, volume=0.9):
             os.makedirs(out_dir, exist_ok=True)
         engine.save_to_file(text, output_path)
         engine.runAndWait()
-        print(f"✅ 语音已保存至：{output_path}")
+        logger.info(f"✅ 语音已保存至：{output_path}")
     else:
         engine.say(text)
         engine.runAndWait()

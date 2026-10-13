@@ -4,7 +4,10 @@ import os
 from enum import Enum
 from dataclasses import dataclass, field
 from typing import Any, Dict, List
+import logging
 
+
+logger = logging.getLogger("fire_agents.agent1")
 
 class FactLevel(str, Enum):
     KNOWN = "known"
@@ -268,5 +271,5 @@ if __name__ == "__main__":
     out = os.path.join(os.path.dirname(__file__), "inputs",
                        "xinghua_11_14_case_facts.json")
     reg.to_json(out)
-    print(f"已导出：{out}")
-    print("缺失必填：", [x.key for x in reg.missing_required()])
+    logger.info(f"已导出：{out}")
+    logger.info("缺失必填：", [x.key for x in reg.missing_required()])

@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """
+logger = logging.getLogger("fire_agents.agent3")
+
 3.2.1 基于 YOLO 的物品识别
 封装 YOLO 推理，输出结构化检测结果
 """
@@ -7,6 +9,7 @@ import os
 from pathlib import Path
 from ultralytics import YOLO
 from config import YOLO_WEIGHTS
+import logging
 
 
 class YoloDetector:
@@ -16,8 +19,8 @@ class YoloDetector:
             raise FileNotFoundError(f"YOLO 权重不存在：{weights}")
         self.model = YOLO(weights)
         self.class_names = self.model.names   # {0: 'fire_extinguisher', ...}
-        print(f"✅ YOLO 已加载：{weights}")
-        print(f"   类别：{list(self.class_names.values())}")
+        logger.info(f"✅ YOLO 已加载：{weights}")
+        logger.info(f"   类别：{list(self.class_names.values())}")
 
     def detect(self, source, conf=0.25, imgsz=320):
         """
@@ -84,13 +87,13 @@ if __name__ == "__main__":
     # test_img = r"D:\AI\ollama_deepseek\yolov8\fire_mini\images\train\随便一张.jpg"
 
     r = det.detect(test_img)
-    print("\n检测结果：")
-    print(f"  总目标数：{r['total_objects']}")
-    print(f"  分类统计：{r['counts']}")
+    logger.info("\n检测结果：")
+    logger.info(f"  总目标数：{r['total_objects']}")
+    logger.info(f"  分类统计：{r['counts']}")
 
     if r['total_objects'] > 0:
-        print("\n详细检测：")
+        logger.info("\n详细检测：")
         for d in r['detections'][:10]:
-            print(f"  {d['class']} (conf={d['confidence']})")
+            logger.info(f"  {d['class']} (conf={d['confidence']})")
     else:
-        print("\n⚠️ 未检测到任何目标，请确认图片中有消防设施")
+        logger.info("\n⚠️ 未检测到任何目标，请确认图片中有消防设施")

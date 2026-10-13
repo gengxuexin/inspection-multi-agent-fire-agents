@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """
+logger = logging.getLogger("fire_agents.agent2")
+
 Agent3 语音处理器主入口
 用法：
     python main.py video2text <video> [whisper|xfyun_lfasr|vosk]
@@ -12,6 +14,7 @@ Agent3 语音处理器主入口
 import sys
 import os
 from config import INPUT_DIR, OUT_WHISPER, OUT_XFYUN_LFASR, OUT_VOSK
+import logging
 
 
 def cmd_video2text(video_path, engine="whisper"):
@@ -34,7 +37,7 @@ def cmd_batch(engine="whisper"):
         if f.lower().endswith((".mp4", ".mkv", ".avi", ".mov"))
     ]
     if not videos:
-        print(f"⚠️ {INPUT_DIR} 下没有视频文件")
+        logger.info(f"⚠️ {INPUT_DIR} 下没有视频文件")
         return
     for v in videos:
         cmd_video2text(os.path.join(INPUT_DIR, v), engine)
@@ -66,13 +69,13 @@ def cmd_check_env():
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print(__doc__)
+        logger.info(__doc__)
         sys.exit(0)
 
     cmd = sys.argv[1].lower()
     if cmd == "video2text":
         if len(sys.argv) < 3:
-            print("用法：python main.py video2text <video路径> [engine]")
+            logger.info("用法：python main.py video2text <video路径> [engine]")
             sys.exit(1)
         engine = sys.argv[3] if len(sys.argv) > 3 else "whisper"
         cmd_video2text(sys.argv[2], engine)
@@ -87,5 +90,5 @@ if __name__ == "__main__":
     elif cmd == "check_env":
         cmd_check_env()
     else:
-        print(f"未知命令：{cmd}")
-        print(__doc__)
+        logger.info(f"未知命令：{cmd}")
+        logger.info(__doc__)

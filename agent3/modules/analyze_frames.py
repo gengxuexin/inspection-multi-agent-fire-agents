@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """
+logger = logging.getLogger("fire_agents.agent3")
+
 3.2.3 抽帧分析（完整输出所有结果）
 """
 import os
@@ -11,6 +13,7 @@ from openai import OpenAI
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from config import DASHSCOPE_API_KEY, BASE_URL, VLM_MODEL
+import logging
 
 # ========== 1. 配置 ==========
 MODEL = VLM_MODEL
@@ -66,7 +69,7 @@ def main():
     if not frames:
         raise RuntimeError(f"没找到图片，请先运行 extract_frames.py：{FRAMES_DIR}")
 
-    print(f"共 {len(frames)} 张图片待分析\n")
+    logger.info(f"共 {len(frames)} 张图片待分析\n")
     client = OpenAI(api_key=DASHSCOPE_API_KEY, base_url=BASE_URL)
 
     # ---- 并发逐帧分析 ----
@@ -79,20 +82,20 @@ def main():
             answer = future.result()
             results[f.name] = answer
             done += 1
-            print(f"\n[{done}/{len(frames)}] {f.name}")
-            print(answer)
-            print("-" * 60)
+            logger.info(f"\n[{done}/{len(frames)}] {f.name}")
+            logger.info(answer)
+            logger.info("-" * 60)
 
     # ---- 保存逐帧结果（按文件名排序）----
     sorted_results = {k: results[k] for k in sorted(results.keys())}
     with open(RESULT_JSON, "w", encoding="utf-8") as fp:
         json.dump(sorted_results, fp, ensure_ascii=False, indent=2)
-    print(f"\n✅ 逐帧结果已保存：{RESULT_JSON}")
+    logger.info(f"\n✅ 逐帧结果已保存：{RESULT_JSON}")
 
     # ---- 综合判断 ----
-    print("\n" + "=" * 60)
-    print("综合判断")
-    print("=" * 60)
+    logger.info("\n" + "=" * 60)
+    logger.info("综合判断")
+    logger.info("=" * 60)
 
     summary_input = "\n\n".join(
         f"【{k}】{sorted_results[k]}" for k in sorted_results.keys()
@@ -113,7 +116,7 @@ def main():
     )
     summary_text = summary_resp.choices[0].message.content
 
-    print(summary_text)
+    logger.info(summary_text)
 
     # ---- 保存综合判断 ----
     summary_data = {
@@ -124,7 +127,7 @@ def main():
     }
     with open(SUMMARY_JSON, "w", encoding="utf-8") as fp:
         json.dump(summary_data, fp, ensure_ascii=False, indent=2)
-    print(f"\n✅ 综合判断已保存：{SUMMARY_JSON}")
+    logger.info(f"\n✅ 综合判断已保存：{SUMMARY_JSON}")
 
     # ---- 生成 Markdown 报告 ----
     md_lines = [
@@ -145,7 +148,7 @@ def main():
 
     with open(REPORT_MD, "w", encoding="utf-8") as fp:
         fp.write("\n".join(md_lines))
-    print(f"✅ Markdown 报告已生成：{REPORT_MD}")
+    logger.info(f"✅ Markdown 报告已生成：{REPORT_MD}")
 
 
 if __name__ == "__main__":

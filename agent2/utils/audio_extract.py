@@ -3,12 +3,15 @@
 import os
 import sys
 import subprocess
+import logging
 
+
+logger = logging.getLogger("fire_agents.agent2")
 
 def extract_audio_from_video(video_path, output_path):
     """从视频中提取音频，输出 16kHz/16bit/单声道 WAV"""
     if not os.path.exists(video_path):
-        print(f"❌ 找不到视频：{video_path}")
+        logger.info(f"❌ 找不到视频：{video_path}")
         return None
 
     out_dir = os.path.dirname(output_path)
@@ -37,12 +40,12 @@ def extract_audio_from_video(video_path, output_path):
             capture_output=True,
             creationflags=creation_flags,
         )
-        print(f"✅ 音频提取完成：{output_path}")
+        logger.info(f"✅ 音频提取完成：{output_path}")
         return output_path
     except FileNotFoundError:
-        print("❌ 找不到 ffmpeg，请确认已安装并加入 PATH")
+        logger.info("❌ 找不到 ffmpeg，请确认已安装并加入 PATH")
         return None
     except subprocess.CalledProcessError as e:
         err = e.stderr.decode("utf-8", errors="ignore") if e.stderr else ""
-        print(f"❌ ffmpeg 失败：{err[-500:]}")
+        logger.error(f"❌ ffmpeg 失败：{err[-500:]}")
         return None

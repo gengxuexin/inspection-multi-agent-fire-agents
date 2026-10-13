@@ -6,7 +6,10 @@ import time
 
 from config import ds_client
 from rag_module import rag_ask
+import logging
 
+
+logger = logging.getLogger("fire_agents.agent1")
 
 QUESTION_GEN_PROMPT = """你是一位消防行政执法人员，正在对当事人进行现场询问。
 请根据以下案情和检索到的法律条文，生成 5-8 个有针对性的询问问题。
@@ -70,17 +73,17 @@ def generate_interview_docx(
     case_desc = case_context.get("case_context", "")
 
     # ========== 1. 先用 RAG 检索相关法条 ==========
-    print("    [1/4] 检索相关法条...")
+    logger.info("    [1/4] 检索相关法条...")
     try:
         legal_context = rag_ask(
             f"消防监督执法中，针对以下情况涉及哪些法律条文？请列出条文编号和原文：{case_desc}"
         )
     except Exception as e:
-        print(f"    ⚠️ RAG 检索失败：{e}，将使用空法条上下文")
+        logger.error(f"    ⚠️ RAG 检索失败：{e}，将使用空法条上下文")
         legal_context = "（未能检索到法条，请基于常识生成通用问题）"
 
     # ========== 2. 调用 LLM 生成问题 ==========
-    print("    [2/4] 调用 LLM 生成询问提纲...")
+    logger.info("    [2/4] 调用 LLM 生成询问提纲...")
     resp = ds_client.chat.completions.create(
         model="deepseek-chat",
         messages=[{"role": "user", "content": QUESTION_GEN_PROMPT.format(
@@ -95,20 +98,20 @@ def generate_interview_docx(
     # ========== 3. 演示模式：为每个问题生成 AI 回答 ==========
     qa_pairs = []   # [(问题, 回答 or None)]
     if generate_answers:
-        print(f"    [3/4] 演示模式：为 {len(questions)} 个问题生成 AI 回答...")
+        logger.info(f"    [3/4] 演示模式：为 {len(questions)} 个问题生成 AI 回答...")
         for i, q in enumerate(questions, 1):
             q_clean = _strip_prefix(q, i)
-            print(f"          ({i}/{len(questions)}) {q_clean[:30]}...")
+            logger.info(f"          ({i}/{len(questions)}) {q_clean[:30]}...")
             ans = _generate_ai_answer(q_clean)
             qa_pairs.append((q_clean, ans))
             time.sleep(0.3)   # 避免 API 限流
     else:
-        print("    [3/4] 提纲模式：答案留空由办案人员现场记录")
+        logger.info("    [3/4] 提纲模式：答案留空由办案人员现场记录")
         for i, q in enumerate(questions, 1):
             qa_pairs.append((_strip_prefix(q, i), None))
 
     # ========== 4. 写入 Word ==========
-    print("    [4/4] 写入 Word 文档...")
+    logger.info("    [4/4] 写入 Word 文档...")
     doc = Document()
     title = doc.add_heading("询问笔录", level=1)
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER

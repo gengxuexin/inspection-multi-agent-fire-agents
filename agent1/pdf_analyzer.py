@@ -1,4 +1,6 @@
 """
+logger = logging.getLogger("fire_agents.agent1")
+
 PDF 分析模块
 - 从 PDF 提取文本（支持文本型 + 扫描件 OCR 可选）
 - 用 LLM 从 PDF 文本中抽取案情描述 + 结构化字段
@@ -8,6 +10,7 @@ import json
 import tempfile
 from pypdf import PdfReader
 from config import ds_client
+import logging
 
 
 # ==================== PDF → 文本 ====================
@@ -57,7 +60,7 @@ def extract_pdf_text(file_bytes: bytes, file_name: str = "input.pdf") -> str:
     text = pdf_to_text(file_bytes, file_name)
     # 少于 100 字符通常意味着这是扫描件
     if len(text.strip()) < 100:
-        print(f"    [info] PDF 文本过少（{len(text)} 字符），尝试 OCR...")
+        logger.info(f"    [info] PDF 文本过少（{len(text)} 字符），尝试 OCR...")
         ocr_text = pdf_to_text_ocr(file_bytes)
         if ocr_text:
             return ocr_text

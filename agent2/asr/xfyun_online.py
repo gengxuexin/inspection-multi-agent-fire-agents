@@ -14,7 +14,10 @@ from datetime import datetime
 from time import mktime
 
 from config import XFYUN_APP_ID, XFYUN_API_KEY, XFYUN_API_SECRET
+import logging
 
+
+logger = logging.getLogger("fire_agents.agent2")
 
 class XfyunASRClient:
     """科大讯飞在线语音听写（流式版）客户端"""
@@ -69,7 +72,7 @@ class XfyunASRClient:
         return url + "?" + urlencode(params)
 
     def _on_open(self, ws):
-        print("[讯飞] WebSocket 连接已建立")
+        logger.info("[讯飞] WebSocket 连接已建立")
 
     def _on_message(self, ws, message):
         try:
@@ -77,7 +80,7 @@ class XfyunASRClient:
             code = data.get("code", -1)
 
             if code != 0:
-                print(f"[讯飞] 错误码: {code}, 信息: {data.get('message', '')}")
+                logger.error(f"[讯飞] 错误码: {code}, 信息: {data.get('message', '')}")
                 self.done.set()
                 return
 
@@ -92,18 +95,18 @@ class XfyunASRClient:
                     self.on_result(text)
 
             if result_data.get("status") == 2:
-                print("[讯飞] 识别完成")
+                logger.info("[讯飞] 识别完成")
                 self.done.set()
 
         except Exception as e:
-            print(f"[讯飞] 消息解析异常: {e}")
+            logger.error(f"[讯飞] 消息解析异常: {e}")
 
     def _on_error(self, ws, error):
-        print(f"[讯飞] WebSocket 错误: {error}")
+        logger.error(f"[讯飞] WebSocket 错误: {error}")
         self.done.set()
 
     def _on_close(self, ws, close_status_code, close_msg):
-        print("[讯飞] WebSocket 连接已关闭")
+        logger.info("[讯飞] WebSocket 连接已关闭")
         self.done.set()
 
     def recognize(self, pcm_file_path):
@@ -158,7 +161,7 @@ class XfyunASRClient:
 
                 audio_data = f.read(frame_size)
                 if not audio_data:
-                    print("❌ 音频文件为空")
+                    logger.info("❌ 音频文件为空")
                     return
 
                 first_frame["data"]["audio"] = base64.b64encode(
@@ -184,7 +187,7 @@ class XfyunASRClient:
                     try:
                         self.ws.send(json.dumps(mid_frame))
                     except websocket.WebSocketConnectionClosedException:
-                        print("[讯飞] 连接已关闭，停止发送")
+                        logger.info("[讯飞] 连接已关闭，停止发送")
                         self.done.set()
                         break
 
@@ -202,10 +205,10 @@ class XfyunASRClient:
                     try:
                         self.ws.send(json.dumps(end_frame))
                     except websocket.WebSocketConnectionClosedException:
-                        print("[讯飞] 连接已关闭，无法发送结束帧")
+                        logger.info("[讯飞] 连接已关闭，无法发送结束帧")
 
         except Exception as e:
-            print(f"[讯飞] 发送异常: {e}")
+            logger.error(f"[讯飞] 发送异常: {e}")
 
         self.done.wait(timeout=120)
 

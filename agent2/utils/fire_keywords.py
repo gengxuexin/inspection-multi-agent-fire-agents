@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
 """统一的消防关键词提取器"""
 import re
+import logging
+
+logger = logging.getLogger("fire_agents.agent2")
 
 class FireKeywordExtractor:
     PATTERNS = {
@@ -59,15 +62,15 @@ class FireKeywordExtractor:
 
     def print_summary(self, keywords):
         """统一打印消防事件摘要"""
-        print("\n" + "=" * 60)
-        print("📋 消防事件摘要")
-        print("=" * 60)
+        logger.info("\n" + "=" * 60)
+        logger.info("📋 消防事件摘要")
+        logger.info("=" * 60)
         if not keywords:
-            print("  （未匹配到关键词）")
+            logger.info("  （未匹配到关键词）")
         else:
             for k, v in keywords.items():
                 if isinstance(v, list):
-                    print(f"  {k}: {'、'.join(v)}")
+                    logger.info(f"  {k}: {'、'.join(v)}")
                 else:
-                    print(f"  {k}: {v}")
-        print("=" * 60)
+                    logger.info(f"  {k}: {v}")
+        logger.info("=" * 60)

@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """
+logger = logging.getLogger("fire_agents.agent3")
+
 3.2.2 视频内容直接分析
 将视频切分为3~5秒小段，逐段上传Qwen3-VL进行识别，保存完整结果
 """
@@ -12,6 +14,7 @@ from openai import OpenAI
 
 from split_video import split_video
 from config import DASHSCOPE_API_KEY, BASE_URL, VLM_MODEL
+import logging
 
 # ========== 1. 配置 ==========
 MODEL = VLM_MODEL
@@ -75,29 +78,29 @@ def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     # ---- Step 1: 切分视频 ----
-    print("=" * 50)
-    print("Step 1: 切分视频")
-    print("=" * 50)
+    logger.info("=" * 50)
+    logger.info("Step 1: 切分视频")
+    logger.info("=" * 50)
     segments = split_video(VIDEO_PATH, SEGMENT_DIR, SEGMENT_SECONDS)
 
     # ---- Step 2: 逐段分析 ----
-    print("=" * 50)
-    print("Step 2: 逐段上传 Qwen3-VL 分析")
-    print("=" * 50)
+    logger.info("=" * 50)
+    logger.info("Step 2: 逐段上传 Qwen3-VL 分析")
+    logger.info("=" * 50)
 
     client = OpenAI(api_key=DASHSCOPE_API_KEY, base_url=BASE_URL)
     results = []
 
     for i, seg in enumerate(segments):
-        print(f"\n正在分析第 {i + 1}/{len(segments)} 段：{os.path.basename(seg)}")
+        logger.info(f"\n正在分析第 {i + 1}/{len(segments)} 段：{os.path.basename(seg)}")
         answer = analyze_segment(client, seg)
         results.append({
             "segment": os.path.basename(seg),
             "index": i,
             "answer": answer,
         })
-        print(answer)
-        print("-" * 60)
+        logger.info(answer)
+        logger.info("-" * 60)
         time.sleep(0.5)
 
     # ---- Step 3: 保存逐段结果 ----
@@ -109,12 +112,12 @@ def main():
             "analyzed_at": datetime.now().isoformat(),
             "results": results,
         }, fp, ensure_ascii=False, indent=2)
-    print(f"\n✅ 逐段结果已保存：{SEGMENT_JSON}")
+    logger.info(f"\n✅ 逐段结果已保存：{SEGMENT_JSON}")
 
     # ---- Step 4: 整体综合判断 ----
-    print("\n" + "=" * 50)
-    print("Step 4: 整体综合判断")
-    print("=" * 50)
+    logger.info("\n" + "=" * 50)
+    logger.info("Step 4: 整体综合判断")
+    logger.info("=" * 50)
 
     summary_prompt = (
         "以下是消防检查视频各片段的AI分析结果，请综合判断：\n"
@@ -131,7 +134,7 @@ def main():
         max_tokens=1500,
     )
     summary_text = completion.choices[0].message.content
-    print(summary_text)
+    logger.info(summary_text)
 
     # ---- Step 5: 保存综合判断 ----
     with open(SUMMARY_JSON, "w", encoding="utf-8") as fp:
@@ -141,7 +144,7 @@ def main():
             "total_segments": len(segments),
             "summary": summary_text,
         }, fp, ensure_ascii=False, indent=2)
-    print(f"\n✅ 综合判断已保存：{SUMMARY_JSON}")
+    logger.info(f"\n✅ 综合判断已保存：{SUMMARY_JSON}")
 
 
 if __name__ == "__main__":

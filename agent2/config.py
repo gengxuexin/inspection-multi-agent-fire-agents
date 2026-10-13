@@ -2,6 +2,9 @@
 """全局配置：所有密钥从环境变量读取，路径按项目结构生成"""
 import os
 import sys
+import logging
+logger = logging.getLogger("fire_agents.agent2")
+
 try:
     from dotenv import load_dotenv
     load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
@@ -87,9 +90,9 @@ def check_env(verbose=False):
     if not DASHSCOPE_API_KEY:
         missing.append("DASHSCOPE_API_KEY")
     if missing:
-        print(f"⚠️ 以下环境变量未设置（相关功能将不可用）：{', '.join(missing)}")
+        logger.info(f"⚠️ 以下环境变量未设置（相关功能将不可用）：{', '.join(missing)}")
     if verbose:
-        print(f"✅ Whisper 设备：{WHISPER_DEVICE} ({WHISPER_COMPUTE_TYPE})")
+        logger.info(f"✅ Whisper 设备：{WHISPER_DEVICE} ({WHISPER_COMPUTE_TYPE})")
     return len(missing) == 0
 
 

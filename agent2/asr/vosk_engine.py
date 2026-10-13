@@ -5,7 +5,10 @@ import json
 import wave
 from vosk import Model, KaldiRecognizer, SetLogLevel
 from config import VOSK_MODEL_PATH
+import logging
 
+
+logger = logging.getLogger("fire_agents.agent2")
 
 class VoskEngine:
     """Vosk 识别引擎（模型单例，识别器每次新建 → 线程安全）"""
@@ -28,23 +31,23 @@ class VoskEngine:
                 raise FileNotFoundError(
                     f"❌ Vosk 模型路径不存在：{VOSK_MODEL_PATH}"
                 )
-            print(f"⏳ 正在加载 Vosk 模型：{VOSK_MODEL_PATH}")
+            logger.info(f"⏳ 正在加载 Vosk 模型：{VOSK_MODEL_PATH}")
             VoskEngine._model = Model(VOSK_MODEL_PATH)
-            print("✅ Vosk 模型加载完成")
+            logger.info("✅ Vosk 模型加载完成")
 
     def transcribe(self, audio_path):
         """识别音频，返回文本（每次新建 KaldiRecognizer，线程安全）"""
         if not audio_path or not os.path.exists(audio_path):
-            print(f"❌ 找不到音频：{audio_path}")
+            logger.info(f"❌ 找不到音频：{audio_path}")
             return ""
 
-        print(f"🎙️ [Vosk] 识别：{audio_path}")
+        logger.info(f"🎙️ [Vosk] 识别：{audio_path}")
         wf = wave.open(audio_path, "rb")
 
         if (wf.getnchannels() != 1
                 or wf.getsampwidth() != 2
                 or wf.getcomptype() != "NONE"):
-            print("⚠️ 音频格式需为 16kHz/16bit/单声道 WAV")
+            logger.info("⚠️ 音频格式需为 16kHz/16bit/单声道 WAV")
             wf.close()
             return ""
 
@@ -67,14 +70,14 @@ class VoskEngine:
             full_text += final_result["text"]
 
         wf.close()
-        print(f"📝 [Vosk] 识别结果：{full_text}")
+        logger.info(f"📝 [Vosk] 识别结果：{full_text}")
         return full_text.strip()
 
 
 if __name__ == "__main__":
     import sys
     if len(sys.argv) < 2:
-        print("用法：python -m asr.vosk_engine <音频路径>")
+        logger.info("用法：python -m asr.vosk_engine <音频路径>")
         sys.exit(1)
     engine = VoskEngine()
-    print(engine.transcribe(sys.argv[1]))
+    logger.info(engine.transcribe(sys.argv[1]))

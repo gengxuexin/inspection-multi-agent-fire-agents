@@ -1,9 +1,12 @@
 """
+logger = logging.getLogger("fire_agents.agent1")
+
 docx → pdf 转换器
 优先用 docx2pdf（依赖本机 Office），失败则用 LibreOffice
 """
 import os
 import subprocess
+import logging
 
 
 def docx_to_pdf(docx_path: str, pdf_path: str = None) -> str:
@@ -14,7 +17,7 @@ def docx_to_pdf(docx_path: str, pdf_path: str = None) -> str:
         pdf_path = os.path.splitext(docx_path)[0] + ".pdf"
 
     if not os.path.exists(docx_path):
-        print(f"    ⚠️ 源文件不存在: {docx_path}")
+        logger.info(f"    ⚠️ 源文件不存在: {docx_path}")
         return ""
 
     # 方法 1：docx2pdf（依赖本机 Office，转换保真好）
@@ -26,7 +29,7 @@ def docx_to_pdf(docx_path: str, pdf_path: str = None) -> str:
     except ImportError:
         pass
     except Exception as e:
-        print(f"    docx2pdf 失败: {e}")
+        logger.error(f"    docx2pdf 失败: {e}")
 
     # 方法 2：LibreOffice headless
     # Windows 常见路径
@@ -64,11 +67,11 @@ def docx_to_pdf(docx_path: str, pdf_path: str = None) -> str:
                     os.rename(generated, pdf_path)
                 return pdf_path
         except Exception as e:
-            print(f"    LibreOffice 失败: {e}")
+            logger.error(f"    LibreOffice 失败: {e}")
 
-    print("    ❌ 未找到 docx→pdf 转换工具。请安装：")
-    print("       pip install docx2pdf    （需要本机安装 Microsoft Word）")
-    print("       或安装 LibreOffice: https://www.libreoffice.org/")
+    logger.info("    ❌ 未找到 docx→pdf 转换工具。请安装：")
+    logger.info("       pip install docx2pdf    （需要本机安装 Microsoft Word）")
+    logger.info("       或安装 LibreOffice: https://www.libreoffice.org/")
     return ""
 
 
@@ -79,9 +82,9 @@ def batch_convert(output_dir: str, keep_docx: bool = True):
     docx_files = [f for f in os.listdir(output_dir) if f.endswith(".docx")]
     for f in docx_files:
         docx_path = os.path.join(output_dir, f)
-        print(f"    📄 转换: {f}")
+        logger.info(f"    📄 转换: {f}")
         pdf_path = docx_to_pdf(docx_path)
         if pdf_path:
-            print(f"       ✅ → {os.path.basename(pdf_path)}")
+            logger.info(f"       ✅ → {os.path.basename(pdf_path)}")
             if not keep_docx:
                 os.remove(docx_path)

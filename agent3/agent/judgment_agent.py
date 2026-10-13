@@ -12,7 +12,10 @@ from openai import OpenAI
 from config import (
     DASHSCOPE_API_KEY, BASE_URL, VLM_MODEL, JUDGE_MODEL, ALERT_CATEGORIES
 )
+import logging
 
+
+logger = logging.getLogger("fire_agents.agent3.agent")
 
 JUDGMENT_SYSTEM_PROMPT = """你是消防安全检查专家。你的任务是根据【图片画面】和【AI 辅助检测结果】，
 进行综合判断，输出结构化告警。
@@ -134,14 +137,14 @@ class JudgmentAgent:
                 },
             ]
             model = VLM_MODEL   # 用视觉模型
-            print(f"[JudgmentAgent] 使用 VLM 融合判断（含原图）")
+            logger.info(f"[JudgmentAgent] 使用 VLM 融合判断（含原图）")
         else:
             messages = [
                 {"role": "system", "content": JUDGMENT_SYSTEM_PROMPT},
                 {"role": "user", "content": user_text},
             ]
             model = JUDGE_MODEL  # 纯文本模型
-            print(f"[JudgmentAgent] 使用纯文本判断（无原图）")
+            logger.info(f"[JudgmentAgent] 使用纯文本判断（无原图）")
 
         # ========== 3. 调用 LLM ==========
         try:
@@ -160,7 +163,7 @@ class JudgmentAgent:
                 "overall_conclusion": "综合判断失败，模型未返回有效 JSON",
             }
         except Exception as e:
-            print(f"[JudgmentAgent] 调用失败：{e}")
+            logger.error(f"[JudgmentAgent] 调用失败：{e}")
             result = {
                 "alerts": [],
                 "overall_level": "error",
@@ -175,32 +178,32 @@ class JudgmentAgent:
     @staticmethod
     def print_report(result):
         """打印可读报告"""
-        print("\n" + "=" * 60)
-        print("消防检查综合判断报告")
-        print("=" * 60)
-        print(f"检查时间：{result.get('check_time', '未知')}")
-        print(f"源信息：{result.get('source_info', '')}")
-        print(f"使用模型：{result.get('model_used', '')}")
+        logger.info("\n" + "=" * 60)
+        logger.info("消防检查综合判断报告")
+        logger.info("=" * 60)
+        logger.info(f"检查时间：{result.get('check_time', '未知')}")
+        logger.info(f"源信息：{result.get('source_info', '')}")
+        logger.info(f"使用模型：{result.get('model_used', '')}")
 
         level = result.get("overall_level", "unknown")
-        print(f"\n【总体等级】{level.upper()}")
+        logger.info(f"\n【总体等级】{level.upper()}")
 
         alerts = result.get("alerts", [])
         if not alerts:
-            print("\n✅ 未发现明显隐患")
+            logger.info("\n✅ 未发现明显隐患")
         else:
-            print(f"\n【告警列表】共 {len(alerts)} 条")
+            logger.info(f"\n【告警列表】共 {len(alerts)} 条")
             for i, a in enumerate(alerts, 1):
                 alert_name = ALERT_CATEGORIES.get(a.get("type", "other"), "其他")
-                print(f"\n  [{i}] {alert_name} | 等级：{a.get('level', '?')}")
-                print(f"      标题：{a.get('title', '')}")
-                print(f"      描述：{a.get('description', '')}")
-                print(f"      证据：{a.get('evidence', '')}")
-                print(f"      建议：{a.get('suggestion', '')}")
+                logger.info(f"\n  [{i}] {alert_name} | 等级：{a.get('level', '?')}")
+                logger.info(f"      标题：{a.get('title', '')}")
+                logger.info(f"      描述：{a.get('description', '')}")
+                logger.info(f"      证据：{a.get('evidence', '')}")
+                logger.info(f"      建议：{a.get('suggestion', '')}")
 
-        print(f"\n【总体结论】")
-        print(f"  {result.get('overall_conclusion', '')}")
-        print("=" * 60)
+        logger.info(f"\n【总体结论】")
+        logger.info(f"  {result.get('overall_conclusion', '')}")
+        logger.info("=" * 60)
 
 
 # ========== 测试 ==========

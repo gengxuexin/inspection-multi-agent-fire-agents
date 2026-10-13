@@ -11,7 +11,10 @@ from config import (
     DASHSCOPE_API_KEY, WORKSPACE_ID, REGION,
     COSYVOICE_MODEL, CLONED_VOICE_ID, OUT_TTS,
 )
+import logging
 
+
+logger = logging.getLogger("fire_agents.agent2")
 if not DASHSCOPE_API_KEY:
     raise RuntimeError(
         "未设置 DASHSCOPE_API_KEY 环境变量，CosyVoice 不可用"
@@ -59,10 +62,10 @@ def list_builtin_voices(model=None):
         voices = BUILTIN_VOICES[model]
     else:
         voices = [v for vs in BUILTIN_VOICES.values() for v in vs]
-    print(f"📢 共 {len(voices)} 个预置音色：")
+    logger.info(f"📢 共 {len(voices)} 个预置音色：")
     for v in voices:
-        print(f"   {v['name']:8s} | {v['voice']:25s} | "
-              f"{v['gender']:4s} | {v['desc']}")
+        logger.info("   %-8s | %-25s | %-4s | %s",
+                     v["name"], v["voice"], v["gender"], v["desc"])
     return voices
 
 
@@ -81,12 +84,12 @@ def list_cloned_voices(prefix=""):
         resp = requests.post(url, headers=headers, json=payload, timeout=30)
         result = resp.json()
         voices = result.get("output", {}).get("voices", [])
-        print(f"📢 已克隆音色 {len(voices)} 个：")
+        logger.info(f"📢 已克隆音色 {len(voices)} 个：")
         for v in voices:
-            print(f"   {v.get('voice_id')} | 状态: {v.get('status')}")
+            logger.info(f"   {v.get('voice_id')} | 状态: {v.get('status')}")
         return voices
     except Exception as e:
-        print(f"❌ 查询异常：{e}")
+        logger.error(f"❌ 查询异常：{e}")
         return []
 
 
@@ -99,10 +102,10 @@ def clone_voice(audio_url, prefix, target_model=None):
             target_model=target_model, prefix=prefix, url=audio_url,
         )
         voice_id = voice.get_voice_id()
-        print(f"✅ 音色克隆成功！voice_id = {voice_id}")
+        logger.info(f"✅ 音色克隆成功！voice_id = {voice_id}")
         return voice_id
     except Exception as e:
-        print(f"❌ 音色克隆失败：{e}")
+        logger.error(f"❌ 音色克隆失败：{e}")
         return None
 
 
@@ -113,7 +116,7 @@ def text_to_speech(text, output_path, voice=None, model=None):
     if out_dir and not os.path.isdir(out_dir):
         os.makedirs(out_dir, exist_ok=True)
 
-    print(f"🎙️ [CosyVoice] 合成：model={model}, voice={voice}")
+    logger.info(f"🎙️ [CosyVoice] 合成：model={model}, voice={voice}")
     synthesizer = SpeechSynthesizer(
         model=model, voice=voice,
         format=AudioFormat.MP3_22050HZ_MONO_256KBPS,
@@ -122,10 +125,10 @@ def text_to_speech(text, output_path, voice=None, model=None):
         audio_data = synthesizer.call(text)
         with open(output_path, "wb") as f:
             f.write(audio_data)
-        print(f"✅ 语音已保存：{output_path}")
+        logger.info(f"✅ 语音已保存：{output_path}")
         return output_path
     except Exception as e:
-        print(f"❌ 合成失败：{e}")
+        logger.error(f"❌ 合成失败：{e}")
         return None
 
 
@@ -161,8 +164,8 @@ def text_to_speech_with_emotion(text, output_path, voice=None, model=None,
     else:
         instruction = f"你说话的情感是{emotion}。"
 
-    print(f"🎙️ [CosyVoice 情感] voice={voice}, emotion={emotion}, "
-          f"instruction={instruction}")
+    logger.info("[CosyVoice 情感] voice=%s, emotion=%s, instruction=%s",
+                 voice, emotion, instruction)
 
     synthesizer = SpeechSynthesizer(
         model=model, voice=voice,
@@ -172,27 +175,27 @@ def text_to_speech_with_emotion(text, output_path, voice=None, model=None,
         audio_data = synthesizer.call(text)
         with open(output_path, "wb") as f:
             f.write(audio_data)
-        print(f"✅ 语音已保存：{output_path}")
+        logger.info(f"✅ 语音已保存：{output_path}")
         return output_path
     except Exception as e:
-        print(f"❌ 合成失败：{e}")
+        logger.error(f"❌ 合成失败：{e}")
         return None
 
 
 if __name__ == "__main__":
     os.makedirs(OUT_TTS, exist_ok=True)
 
-    print("【2.4.1.1】音色提取")
+    logger.info("【2.4.1.1】音色提取")
     list_builtin_voices("cosyvoice-v2")
 
-    print("\n【2.4.1.3】语音合成")
+    logger.info("\n【2.4.1.3】语音合成")
     test_text = "你好，我是消防语音助手，请注意值班室必须二十四小时在岗。"
     text_to_speech(test_text, os.path.join(OUT_TTS, "cosy_龙小淳.mp3"),
                    voice="longxiaochun_v2")
     text_to_speech(test_text, os.path.join(OUT_TTS, "cosy_龙小诚.mp3"),
                    voice="longxiaocheng_v2")
 
-    print("\n【2.4.1.4】情感润色")
+    logger.info("\n【2.4.1.4】情感润色")
     fire_text = "着火了！三楼着火，有两个人被困，请立即派消防车！"
     for emo in ["neutral", "angry", "fearful"]:
         text_to_speech_with_emotion(
@@ -200,4 +203,4 @@ if __name__ == "__main__":
             emotion=emo,
         )
 
-    print(f"\n🎉 输出目录：{OUT_TTS}")
+    logger.info(f"\n🎉 输出目录：{OUT_TTS}")

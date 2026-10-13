@@ -1,4 +1,6 @@
 """
+logger = logging.getLogger("fire_agents.agent1")
+
 字段三级分类 + 派生值规则。
 - FACT    事实类：从案情明文抽（时间/地点/当事人/违法事实）
 - LEGAL   法律类：RAG 检索本地知识库（法律依据/触犯条款/定性）
@@ -7,6 +9,7 @@
 import re
 import datetime
 from enum import Enum
+import logging
 
 
 class FieldKind(str, Enum):
@@ -221,5 +224,5 @@ def generate_penalty_advice(case_text: str, legal_basis: str) -> str:
         )
         return resp.choices[0].message.content.strip()
     except Exception as e:
-        print(f"[field_resolver] 处罚建议生成失败：{e}")
+        logger.error(f"[field_resolver] 处罚建议生成失败：{e}")
         return ""

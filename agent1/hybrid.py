@@ -4,6 +4,9 @@ import re
 import jieba
 from collections import defaultdict
 from langchain_community.vectorstores import FAISS
+import logging
+
+logger = logging.getLogger("fire_agents.agent1")
 
 jieba.setLogLevel(20)
 
@@ -49,12 +52,12 @@ class HybridRetriever:
         )
         self.all_docs = list(self.vs.docstore._dict.values())
 
-        print(f"🔨 构建 BM25（{len(self.all_docs)} 条）...")
+        logger.info(f"🔨 构建 BM25（{len(self.all_docs)} 条）...")
         self.tokenized = [list(jieba.cut(d.page_content)) for d in self.all_docs]
 
         from rank_bm25 import BM25Okapi
         self.bm25 = BM25Okapi(self.tokenized)
-        print("✅ HybridRetriever 就绪")
+        logger.info("✅ HybridRetriever 就绪")
 
     def _precise_search(self, law, article, k):
         """精准定位：先按文件名筛，再按条款号匹配"""
@@ -68,13 +71,13 @@ class HybridRetriever:
         ]
         if not candidates:
             return None
-        print(f"    🎯 精准定位：'{law}' 命中 {len(candidates)} 个 chunk")
+        logger.info(f"    🎯 精准定位：'{law}' 命中 {len(candidates)} 个 chunk")
 
         # 2) 优先返回含条款号的
         if article:
             with_article = [d for d in candidates if article in d.page_content]
             if with_article:
-                print(f"    🎯 精确匹配 '{article}'：{len(with_article)} 条")
+                logger.info(f"    🎯 精确匹配 '{article}'：{len(with_article)} 条")
                 return with_article[:k]
 
             # 3) 没有含完整条款号的，放宽到含"第X条"里的数字
@@ -84,7 +87,7 @@ class HybridRetriever:
                 fuzzy = [d for d in candidates
                          if f"第{num}条" in d.page_content]
                 if fuzzy:
-                    print(f"    🎯 模糊匹配 '第{num}条'：{len(fuzzy)} 条")
+                    logger.info(f"    🎯 模糊匹配 '第{num}条'：{len(fuzzy)} 条")
                     return fuzzy[:k]
 
         return candidates[:k]

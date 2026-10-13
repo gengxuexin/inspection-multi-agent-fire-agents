@@ -1,6 +1,9 @@
 """扫描知识库，统计文件类型和大小"""
 import os
 from collections import Counter
+import logging
+
+logger = logging.getLogger("fire_agents.agent1")
 
 KB_DIR = r"D:\AI\ollama_deepseek\agent\knowledge_base\full"
 
@@ -21,8 +24,8 @@ for root, _, files in os.walk(KB_DIR):
         total_files += 1
         total_size += size
 
-print(f"总文件数：{total_files}")
-print(f"总大小：{total_size/1024/1024:.1f} MB\n")
-print("按类型分布：")
+logger.info(f"总文件数：{total_files}")
+logger.info(f"总大小：{total_size/1024/1024:.1f} MB\n")
+logger.info("按类型分布：")
 for ext, cnt in ext_counter.most_common():
-    print(f"  .{ext:8s}  {cnt:5d} 个  {size_counter[ext]/1024/1024:.1f} MB")
+    logger.info(f"  .{ext:8s}  {cnt:5d} 个  {size_counter[ext]/1024/1024:.1f} MB")

@@ -1,9 +1,12 @@
 # -*- coding: utf-8 -*-
 """
+logger = logging.getLogger("fire_agents.agent3")
+
 视频抽帧工具：将视频按固定帧率抽成图片
 """
 import subprocess
 from pathlib import Path
+import logging
 
 
 def extract_frames(video_path, output_dir, fps=1, max_width=1280):
@@ -42,12 +45,12 @@ def extract_frames(video_path, output_dir, fps=1, max_width=1280):
     )
 
     if result.returncode != 0:
-        print("ffmpeg 报错：")
-        print(result.stderr[-2000:])
+        logger.info("ffmpeg 报错：")
+        logger.info(result.stderr[-2000:])
         raise RuntimeError("抽帧失败")
 
     frames = sorted(output_dir.glob("frame_*.jpg"))
-    print(f"✅ 抽帧完成：{len(frames)} 张图片 → {output_dir}")
+    logger.info(f"✅ 抽帧完成：{len(frames)} 张图片 → {output_dir}")
     return frames
 
 
@@ -57,6 +60,6 @@ if __name__ == "__main__":
 
     frames = extract_frames(video, out_dir, fps=1, max_width=1280)
     for f in frames[:5]:
-        print(f)
+        logger.info(f)
     if len(frames) > 5:
-        print(f"... 还有 {len(frames)-5} 张")
+        logger.info(f"... 还有 {len(frames)-5} 张")

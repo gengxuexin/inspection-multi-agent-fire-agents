@@ -14,7 +14,10 @@ from document_io import (
     fill_table_cells, fill_paragraph_placeholders,
     PLACEHOLDER_PATTERN,
 )
+import logging
 
+
+logger = logging.getLogger("fire_agents.agent1")
 
 def has_placeholders(docx_path: str) -> bool:
     doc = Document(docx_path)
@@ -163,7 +166,7 @@ def render_template(docx_path, output_path, case_context,
             llm_mapping = _llm_map(placeholders, case_context)
             mapping.update(llm_mapping)
         except Exception as e:
-            print(f"[warn] LLM 映射失败: {e}")
+            logger.error(f"[warn] LLM 映射失败: {e}")
 
         fill_paragraph_placeholders(doc, mapping)
         for table in doc.tables:

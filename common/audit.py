@@ -1,6 +1,8 @@
 # common/audit.py
 """审计日志与敏感信息脱敏。
 
+logger = logging.getLogger("fire_agents.audit")
+
 - redact：手机号 / 身份证 / 密码键值对 / sk-密钥 脱敏 + 超长截断
 - install_audit_middleware：请求/响应摘要审计（JSONL，best-effort）
 - audit_event：显式业务事件记录（如 review approve/reject、task submit）
@@ -18,6 +20,7 @@ from starlette.responses import Response as StarletteResponse
 from starlette.types import ASGIApp
 
 from common.config import get_settings
+import logging
 
 # ---- 脱敏规则 ----
 _PHONE_RE = re.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)")
@@ -83,7 +86,7 @@ def _write_jsonl(path: str, record: dict) -> None:
     except Exception as e:  # noqa: BLE001
         if not _jsonl_write_warned:
             _jsonl_write_warned = True
-            print(f"[audit] 警告：审计日志写入失败（仅提示一次）：{e}")
+            logger.error(f"[audit] 警告：审计日志写入失败（仅提示一次）：{e}")
 
 
 def _user_sub(user: Any) -> str:

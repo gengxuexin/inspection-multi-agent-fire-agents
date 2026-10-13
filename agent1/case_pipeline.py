@@ -1,4 +1,6 @@
 """
+logger = logging.getLogger("fire_agents.agent1")
+
 Agent2 文书生成 - CLI 主程序（模板驱动 + RAG 法律推理）
 
 流程：
@@ -26,6 +28,7 @@ from case_field_matcher import (
 )
 from rag_legal_advisor import split_fields
 from generate_interview import generate_interview_docx
+import logging
 
 
 # ==================== 目录 ====================
@@ -89,15 +92,15 @@ def generate_one(template_path: str, case_context: dict):
     # 1. 提取模板字段
     fields = extract_fields_from_template(template_path)
     if not fields:
-        print(f"      ⚠️ 未识别到可填字段，跳过")
+        logger.warning(f"      ⚠️ 未识别到可填字段，跳过")
         return None, {"mode": "empty"}
 
     normal, legal = split_fields(fields) if USE_RAG_LEGAL else (fields, [])
-    print(f"      字段：普通 {len(normal)}，法律 {len(legal)}")
+    logger.info(f"      字段：普通 {len(normal)}，法律 {len(legal)}")
 
     # 2. 抽取（自动分流）
     case_text = case_context.get("case_context", "")
-    print(f"      [1/3] LLM 抽取（含 RAG 法律推理）...")
+    logger.info(f"      [1/3] LLM 抽取（含 RAG 法律推理）...")
     extracted = extract_fields_from_case(
         case_text, fields,
         case_dict=case_context,  # ★ 新增
@@ -105,7 +108,7 @@ def generate_one(template_path: str, case_context: dict):
     )
 
     # 3. 校验
-    print(f"      [2/3] LLM 交叉校验...")
+    logger.info(f"      [2/3] LLM 交叉校验...")
     verified = verify_extraction(case_text, extracted)
 
     # 4. 汇总
@@ -115,12 +118,12 @@ def generate_one(template_path: str, case_context: dict):
     missing  = [r["字段"] for r in rows if r["状态"] == "未检索到"]
     mismatch = [r["字段"] for r in rows if r["状态"] == "需人工核对"]
     if missing:
-        print(f"      ⚠️ 未检索到：{missing}")
+        logger.info(f"      ⚠️ 未检索到：{missing}")
     if mismatch:
-        print(f"      ⚠️ 需人工核对：{mismatch}")
+        logger.info(f"      ⚠️ 需人工核对：{mismatch}")
 
     # 5. 回填
-    print(f"      [3/3] 回填模板（{len(mapping)} 个字段）...")
+    logger.info(f"      [3/3] 回填模板（{len(mapping)} 个字段）...")
     doc = Document(template_path)
     fill_paragraph_placeholders(doc, mapping)
     for table in doc.tables:
@@ -135,7 +138,7 @@ def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     if not os.path.isdir(TEMPLATE_DIR):
-        print(f"❌ 模板目录不存在: {TEMPLATE_DIR}")
+        logger.info(f"❌ 模板目录不存在: {TEMPLATE_DIR}")
         return
 
     templates = [
@@ -144,44 +147,44 @@ def main():
         if f.endswith(".docx") and not f.startswith("~$")
     ]
     if not templates:
-        print(f"❌ 模板目录为空: {TEMPLATE_DIR}")
+        logger.info(f"❌ 模板目录为空: {TEMPLATE_DIR}")
         return
 
-    print("=" * 60)
-    print(f"开始生成 {len(templates)} 份文书")
-    print(f"案件编号: {CASE['case_id']}")
-    print(f"RAG 法律推理: {'启用' if USE_RAG_LEGAL else '关闭'}")
-    print("=" * 60)
+    logger.info("=" * 60)
+    logger.info(f"开始生成 {len(templates)} 份文书")
+    logger.info(f"案件编号: {CASE['case_id']}")
+    logger.info(f"RAG 法律推理: {'启用' if USE_RAG_LEGAL else '关闭'}")
+    logger.info("=" * 60)
 
     success, failed = 0, 0
     for tpl in templates:
-        print(f"\n📄 生成【{os.path.basename(tpl)}】...")
+        logger.info(f"\n📄 生成【{os.path.basename(tpl)}】...")
         try:
             out_path, meta = generate_one(tpl, CASE)
             if out_path is None:
-                print(f"   ⏭️ 跳过")
+                logger.warning(f"   ⏭️ 跳过")
                 failed += 1
                 continue
 
-            print(f"   ✅ docx: {os.path.basename(out_path)}")
+            logger.info(f"   ✅ docx: {os.path.basename(out_path)}")
             success += 1
 
             if ALSO_PDF:
                 pdf_path = docx_to_pdf(out_path)
                 if pdf_path:
-                    print(f"   📕 pdf : {os.path.basename(pdf_path)}")
+                    logger.info(f"   📕 pdf : {os.path.basename(pdf_path)}")
         except FileNotFoundError as e:
-            print(f"   ⏭️ 跳过（文件不存在）: {e}")
+            logger.warning(f"   ⏭️ 跳过（文件不存在）: {e}")
             failed += 1
         except Exception as e:
-            print(f"   ❌ 生成失败: {e}")
+            logger.error(f"   ❌ 生成失败: {e}")
             traceback.print_exc()
             failed += 1
 
-    print("\n" + "=" * 60)
-    print(f"完成！成功 {success} 份，失败 {failed} 份")
-    print(f"输出目录: {OUTPUT_DIR}")
-    print("=" * 60)
+    logger.info("\n" + "=" * 60)
+    logger.error(f"完成！成功 {success} 份，失败 {failed} 份")
+    logger.info(f"输出目录: {OUTPUT_DIR}")
+    logger.info("=" * 60)
 
 
 if __name__ == "__main__":
