@@ -1,0 +1,138 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fire-agents"
+version = "2.0.0"
+description = "消防智能执法多模态 Agent 系统：RAG 法规问答 + 多模态案件分析 + 文书自动生成"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+
+[project.optional-dependencies]
+eval = [
+    "ragas>=0.1",
+    "datasets>=2.14",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=4.1",
+    "ruff>=0.4",
+    "mypy>=1.9",
+]
+
+[tool.setuptools]
+packages = ["common"]
+
+# ==================== pytest ====================
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+]
+filterwarnings = [
+    "error::DeprecationWarning:common.*",
+    "ignore::DeprecationWarning",
+    "ignore::UserWarning",
+]
+
+[tool.coverage.run]
+source = ["common", "gateway.py", "orchestrator_langgraph.py"]
+omit = [
+    "*/__pycache__/*",
+    "*/tests/*",
+    "scripts/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]
+
+# ==================== ruff ====================
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+exclude = [
+    ".git",
+    "__pycache__",
+    "agent1/knowledge_base",
+    "agent1/faiss_full",
+    "agent1/faiss_single",
+    "agent1/faiss_multi",
+    "agent2/models",
+    "models",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions
+    "UP",   # pyupgrade
+    "SIM",  # flake8-simplify
+    "RET",  # flake8-return
+    "ARG",  # flake8-unused-arguments
+]
+ignore = [
+    "E501",    # 行长由 formatter 处理
+    "B008",    # FastAPI Depends() 惯用法
+    "SIM105",  # contextlib.suppress 在部分场景可读性更差
+    "RET504",  # 赋值后立即返回有时更清晰
+    "ARG002",  # FastAPI 依赖函数必有未使用参数
+]
+
+[tool.ruff.lint.per-file-ignores]
+# CLI 工具脚本允许使用 print 与未使用的参数
+"scripts/*" = ["T201", "ARG001"]
+"train_classifier.py" = ["T201"]
+"agent1/build_index.py" = ["T201"]
+"agent1/eval/*" = ["T201"]
+# 迁移期：Agent 内部使用 sys.path 注入的模块级导入
+"agent1/*.py" = ["E402"]
+"agent2/*.py" = ["E402"]
+"agent3/**/*.py" = ["E402"]
+# 测试允许 assert 与魔法值
+"tests/*" = ["ARG001", "ARG002"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["common"]
+
+# ==================== mypy ====================
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+check_untyped_defs = true
+ignore_missing_imports = true
+exclude = [
+    "agent1/knowledge_base/",
+    "agent1/faiss_.*/",
+    "agent2/models/",
+    "scripts/",
+]
+
+# 共享包与编排层做严格类型检查（对外契约必须清晰）
+[[tool.mypy.overrides]]
+module = [
+    "common.*",
+    "gateway",
+    "orchestrator_langgraph",
+]
+disallow_untyped_defs = true
+warn_unused_ignores = true

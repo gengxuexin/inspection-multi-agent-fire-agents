@@ -1,0 +1,15 @@
+# 开发与测试依赖（CI 与本地开发共用）
+# 安装：pip install -r requirements-dev.txt
+
+# ---- 测试 ----
+pytest>=8.0
+pytest-asyncio>=0.23
+pytest-cov>=4.1
+
+# ---- 代码规范 ----
+ruff>=0.4
+mypy>=1.9
+
+# ---- 类型存根 ----
+types-PyYAML>=6.0
+types-requests>=2.31
