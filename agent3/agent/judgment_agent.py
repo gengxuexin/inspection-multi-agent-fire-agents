@@ -10,7 +10,7 @@ import base64
 from datetime import datetime
 from openai import OpenAI
 from config import (
-    DASHSCOPE_API_KEY, BASE_URL, VLM_MODEL, JUDGE_MODEL, ALERT_CATEGORIES
+    BASE_URL, VLM_MODEL, JUDGE_MODEL, ALERT_CATEGORIES, require_dashscope
 )
 import logging
 
@@ -82,7 +82,7 @@ class JudgmentAgent:
     """3.2.5 综合判断 Agent（VLM 融合版）"""
 
     def __init__(self):
-        self.client = OpenAI(api_key=DASHSCOPE_API_KEY, base_url=BASE_URL)
+        self.client = OpenAI(api_key=require_dashscope(), base_url=BASE_URL)
 
     def judge(self, yolo_result=None, video_result=None, frame_result=None,
               source_info="", image_path=None):

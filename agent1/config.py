@@ -1,64 +1,47 @@
-# config.py
+# agent1/config.py
+"""Agent1 配置（消防 RAG + 文书生成）。
+
+配置来源已统一到 common.config.get_settings()（项目根 .env，单一配置源）。
+本模块只保留 Agent1 特有的 LLM / Embedding 客户端与工具函数。
+
+- LLM：DeepSeek 官方 API（云端，走系统代理）
+- Embedding：本地 Ollama（索引依赖，建库后不可变）
 """
-Agent1 配置
-- LLM：走 DeepSeek 官方 API（快，云端）
-- Embedding：走本地 Ollama（索引依赖，不能变）
-"""
-import os
 import json
+import logging
+import os
 import re
-import subprocess
-import httpx
+import sys
+
 from openai import OpenAI
 
-# ==================== 加载 .env ====================
-try:
-    from dotenv import load_dotenv
-    load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
-except ImportError:
-    _env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
-    if os.path.exists(_env_path):
-        with open(_env_path) as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    k, v = line.split("=", 1)
-                    os.environ.setdefault(k.strip(), v.strip())
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
 
+from common.config import get_settings, ollama_base_url
 
-_ds_client = None
-_ds_config = {}
-_emb_config = {}
+logger = logging.getLogger("fire_agents.agent1")
 
+# ==================== 读取统一配置 ====================
+_s = get_settings()
 
-# ==================== Ollama 地址检测（Embedding 用）====================
-def _detect_ollama_base():
-    env = os.getenv("OLLAMA_BASE_URL")
-    if env:
-        return env
-    if os.name == "nt":
-        return "http://localhost:11434/v1"
-    try:
-        ip = subprocess.check_output(
-            "ip route show default | awk '{print $3}'", shell=True
-        ).decode().strip()
-        return f"http://{ip}:11434/v1"
-    except Exception:
-        return "http://172.30.32.1:11434/v1"
+OLLAMA_BASE = ollama_base_url()
+DEFAULT_EMB_MODEL = _s.embedding_model   # ★ 必须和建库时一致
 
-
-OLLAMA_BASE = _detect_ollama_base()
-DEFAULT_EMB_MODEL = "quentinz/bge-large-zh-v1.5"   # ★ 必须和建库时一致
+DEEPSEEK_API_KEY = _s.deepseek_api_key
+DEEPSEEK_BASE_URL = _s.deepseek_base_url
+DEEPSEEK_MODEL = _s.deepseek_model        # 或 deepseek-reasoner
 
 
 # ==================== DeepSeek 官方 API 配置（LLM 用）====================
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
-DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")   # 或 deepseek-reasoner
+_ds_client = None
+_ds_config: dict = {}
+_emb_config: dict = {}
 
 
-# ==================== LLM 客户端（DeepSeek）====================
 def set_deepseek(api_key=None, base_url=None, model=None):
+    """初始化 DeepSeek 客户端（幂等，可重复调用以切换配置）。"""
     global _ds_client, _ds_config
     api_key = api_key or DEEPSEEK_API_KEY
     base_url = base_url or DEEPSEEK_BASE_URL
@@ -66,16 +49,12 @@ def set_deepseek(api_key=None, base_url=None, model=None):
 
     if not api_key:
         raise RuntimeError(
-            "DEEPSEEK_API_KEY 未设置。请在 agent1/.env 里配置：\n"
+            "DEEPSEEK_API_KEY 未设置。请在项目根 .env 里配置：\n"
             "  DEEPSEEK_API_KEY=sk-你的密钥"
         )
 
-    # ★ DeepSeek 走外网，不能用 trust_env=False（那样会绕开系统代理）
-    _ds_client = OpenAI(
-        api_key=api_key,
-        base_url=base_url,
-        timeout=300,
-    )
+    # ★ DeepSeek 走外网，不能设 trust_env=False（那样会绕开系统代理）
+    _ds_client = OpenAI(api_key=api_key, base_url=base_url, timeout=300)
     _ds_config = {"api_key": api_key, "base_url": base_url, "model": model}
 
 
@@ -98,9 +77,11 @@ def get_llm_model():
 # ==================== Embedding 客户端（Ollama）====================
 def set_embedding(api_key="ollama", base_url=None, model=None):
     global _emb_config
-    base_url = base_url or OLLAMA_BASE
-    model = model or DEFAULT_EMB_MODEL
-    _emb_config = {"api_key": "ollama", "base_url": base_url, "model": model}
+    _emb_config = {
+        "api_key": "ollama",
+        "base_url": base_url or OLLAMA_BASE,
+        "model": model or DEFAULT_EMB_MODEL,
+    }
 
 
 def get_embedding_config():
@@ -111,6 +92,10 @@ def get_embedding_config():
 
 # ==================== JSON 容错解析 ====================
 def parse_json_safe(text):
+    """从 LLM 输出中稳健提取 JSON 对象。
+
+    处理三类脏输出：thinking 标签混入、```json 代码块围栏、前后缀噪声。
+    """
     if not text:
         return {}
     text = re.sub(r" thinking.*? response", "", text, flags=re.DOTALL).strip()
@@ -142,6 +127,7 @@ def parse_json_safe(text):
 
 # ==================== LLM 调用（走 DeepSeek 官方 API）====================
 def chat_json(messages, temperature=0.1, model=None, timeout=600):
+    """要求模型返回 JSON 对象；模型不支持 json_object 时自动回退普通调用。"""
     cfg = get_deepseek_config()
     client = OpenAI(api_key=cfg["api_key"], base_url=cfg["base_url"], timeout=timeout)
     kwargs = {
@@ -155,7 +141,7 @@ def chat_json(messages, temperature=0.1, model=None, timeout=600):
             **kwargs, response_format={"type": "json_object"}
         )
     except Exception:
-        # 某些模型不支持 json_object 模式，回退到普通调用
+        logger.debug("[chat_json] json_object 模式不被支持，回退普通调用")
         resp = client.chat.completions.create(**kwargs)
     return parse_json_safe(resp.choices[0].message.content)
 
@@ -173,8 +159,8 @@ def chat_text(messages, temperature=0.3, model=None, timeout=600):
 
 
 # ==================== ds_client 兼容层 ====================
-# 很多旧文件里写死了 model="deepseek-chat"，这里拦截并统一
-# 注意：DeepSeek 官方模型的默认名就是 deepseek-chat，一般不用替换
+# 多数文件写死 model="deepseek-chat"，这里拦截并统一到实际配置的模型。
+
 
 class _PatchedCompletions:
     def __init__(self, real, cfg):
@@ -200,6 +186,8 @@ class _PatchedChat:
 
 
 class _LazyDSClient:
+    """延迟初始化代理：首次访问属性时才真正建连，避免导入期失败。"""
+
     def __getattr__(self, name):
         real = get_deepseek()
         cfg = get_deepseek_config()
@@ -211,13 +199,13 @@ class _LazyDSClient:
 ds_client = _LazyDSClient()
 
 
-# ==================== 兼容旧函数名 ====================
-# 有些文件可能还调用 set_deepseek("ollama", "...", "qwen2.5:7b")
-# 这里做个保护：如果传的是 "ollama" 或本地地址，就忽略，统一走 DeepSeek
+# ==================== 兼容旧调用签名 ====================
+# 历史代码存在 set_deepseek("ollama", "...", "qwen2.5:7b") 这类调用，
+# 统一拦截指向本地 Ollama 的入参，强制走 DeepSeek。
 _original_set_deepseek = set_deepseek
 
+
 def set_deepseek(api_key=None, base_url=None, model=None):   # noqa: F811
-    # 忽略任何指向 ollama 的调用
     if api_key and "ollama" in str(api_key).lower():
         return _original_set_deepseek()
     if base_url and "11434" in str(base_url):

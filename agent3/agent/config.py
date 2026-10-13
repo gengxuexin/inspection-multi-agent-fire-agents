@@ -1,65 +1,48 @@
-# -*- coding: utf-8 -*-
-"""
-统一配置 - 所有敏感信息从环境变量读取
+# agent3/agent/config.py
+"""Agent3 配置（视觉：YOLO 检测 + 百度 OCR + VLM 综合判断）。
 
-设置环境变量（PowerShell，永久生效）：
-  [System.Environment]::SetEnvironmentVariable("DASHSCOPE_API_KEY", "sk-xxx", "User")
-  [System.Environment]::SetEnvironmentVariable("BAIDU_API_KEY", "xxx", "User")
-  [System.Environment]::SetEnvironmentVariable("BAIDU_SECRET_KEY", "xxx", "User")
-设置完成后重开终端。
+配置来源统一为 common.config.get_settings()（项目根 .env，单一配置源）。
+密钥缺失时不在 import 阶段抛错，改为延迟到实际调用时报错，
+保证健康检查、无密钥子功能（如仅 YOLO）仍可正常启动。
 """
-# -*- coding: utf-8 -*-
+import logging
 import os
+import sys
 
-# ★ 自动从 .env 加载环境变量（无论怎么启动都能读到）
-try:
-    from dotenv import load_dotenv
-    _env_path = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        ".env"
-    )
-    load_dotenv(_env_path)
-except ImportError:
-    # 没装 python-dotenv 就手动读
-    _env_path = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        ".env"
-    )
-    if os.path.exists(_env_path):
-        with open(_env_path) as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    k, v = line.split("=", 1)
-                    os.environ.setdefault(k.strip(), v.strip())
-                    
-# ========== API 密钥（从环境变量读，不硬编码）==========
-DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY", "")
-BAIDU_API_KEY = os.getenv("BAIDU_API_KEY", "")
-BAIDU_SECRET_KEY = os.getenv("BAIDU_SECRET_KEY", "")
+_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
 
-if not DASHSCOPE_API_KEY:
-    raise RuntimeError(
-        "未设置环境变量 DASHSCOPE_API_KEY。\n"
-        "在 PowerShell 里运行：\n"
-        "  [System.Environment]::SetEnvironmentVariable('DASHSCOPE_API_KEY', 'sk-xxx', 'User')\n"
-        "然后重开终端。"
-    )
+from common.config import get_settings
 
-BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+logger = logging.getLogger("fire_agents.agent3")
+
+_s = get_settings()
+
+# ========== API 密钥 ==========
+DASHSCOPE_API_KEY = _s.dashscope_api_key
+BAIDU_API_KEY = _s.baidu_api_key
+BAIDU_SECRET_KEY = _s.baidu_secret_key
+
+BASE_URL = _s.dashscope_base_url
 
 # ========== 模型 ==========
-VLM_MODEL = "qwen3-vl-flash"      # 视觉理解
-JUDGE_MODEL = "qwen-plus"         # 综合判断（纯文本推理）
+VLM_MODEL = _s.vlm_model       # 视觉理解
+JUDGE_MODEL = _s.judge_model   # 综合判断（纯文本推理）
 
 # ========== 路径 ==========
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BASE_DIR = os.path.join(_ROOT, "agent3")
 INPUT_DIR = os.path.join(BASE_DIR, "input")
 OUTPUT_DIR = os.path.join(BASE_DIR, "output")
+YOLO_WEIGHTS_DIR = os.path.join(INPUT_DIR, "fire_yolo", "weights")
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # ========== YOLO 模型 ==========
-YOLO_WEIGHTS = "/home/geng/fire_agents/agent3/input/fire_yolo/weights/best.pt"
-# ========== 告警类型定义（3.2.5 用）==========
+# 留空则由 ultralytics 使用其默认预训练权重
+YOLO_WEIGHTS = _s.yolo_weights or os.path.join(YOLO_WEIGHTS_DIR, "best.pt")
+
+
+# ========== 告警类型定义（综合判断用）==========
 ALERT_CATEGORIES = {
     "fire":              "明火告警",
     "smoke":             "烟雾告警",
@@ -76,3 +59,37 @@ ALERT_LEVELS = {
     "low":      "低（提示）",
     "normal":   "正常",
 }
+
+
+# ========== 启动检查 ==========
+def require_dashscope() -> str:
+    """需要调用 VLM 时调用，密钥缺失则给出可操作的报错。"""
+    if not DASHSCOPE_API_KEY:
+        raise RuntimeError(
+            "未配置 DASHSCOPE_API_KEY，VLM 功能不可用。\n"
+            "请在项目根 .env 中添加：DASHSCOPE_API_KEY=sk-xxx"
+        )
+    return DASHSCOPE_API_KEY
+
+
+def require_baidu() -> tuple[str, str]:
+    """需要调用百度 OCR 时调用，密钥缺失则给出可操作的报错。"""
+    if not (BAIDU_API_KEY and BAIDU_SECRET_KEY):
+        raise RuntimeError(
+            "未配置 BAIDU_API_KEY / BAIDU_SECRET_KEY，OCR 功能不可用。\n"
+            "请在项目根 .env 中添加：BAIDU_API_KEY=xxx 与 BAIDU_SECRET_KEY=xxx"
+        )
+    return BAIDU_API_KEY, BAIDU_SECRET_KEY
+
+
+def check_env(verbose: bool = False) -> bool:
+    missing = []
+    if not DASHSCOPE_API_KEY:
+        missing.append("DASHSCOPE_API_KEY")
+    if not (BAIDU_API_KEY and BAIDU_SECRET_KEY):
+        missing.append("BAIDU_API_KEY/BAIDU_SECRET_KEY")
+    if missing:
+        logger.warning("以下配置未设置（相关功能不可用）：%s", ", ".join(missing))
+    if verbose:
+        logger.info("VLM 模型：%s，判断模型：%s", VLM_MODEL, JUDGE_MODEL)
+    return len(missing) == 0

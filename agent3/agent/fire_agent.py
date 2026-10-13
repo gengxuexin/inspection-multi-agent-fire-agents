@@ -25,7 +25,8 @@ from video_analyzer import analyze_segment
 from analyze_frames import analyze_frame
 
 from config import (
-    DASHSCOPE_API_KEY, BAIDU_API_KEY, BAIDU_SECRET_KEY,
+    BAIDU_API_KEY, BAIDU_SECRET_KEY,
+    require_dashscope,
     BASE_URL, VLM_MODEL,
     INPUT_DIR, OUTPUT_DIR,
 )
@@ -38,7 +39,7 @@ class FireInspectionAgent:
     """消防检查 Agent"""
 
     def __init__(self, use_yolo=True):
-        self.client = OpenAI(api_key=DASHSCOPE_API_KEY, base_url=BASE_URL)
+        self.client = OpenAI(api_key=require_dashscope(), base_url=BASE_URL)
         self.judge_agent = JudgmentAgent()
         self.yolo = None
         if use_yolo:

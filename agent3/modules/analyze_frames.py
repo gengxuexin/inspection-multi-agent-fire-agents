@@ -12,7 +12,7 @@ from datetime import datetime
 from openai import OpenAI
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from config import DASHSCOPE_API_KEY, BASE_URL, VLM_MODEL
+from config import BASE_URL, VLM_MODEL, require_dashscope
 import logging
 
 # ========== 1. 配置 ==========
@@ -70,7 +70,7 @@ def main():
         raise RuntimeError(f"没找到图片，请先运行 extract_frames.py：{FRAMES_DIR}")
 
     logger.info(f"共 {len(frames)} 张图片待分析\n")
-    client = OpenAI(api_key=DASHSCOPE_API_KEY, base_url=BASE_URL)
+    client = OpenAI(api_key=require_dashscope(), base_url=BASE_URL)
 
     # ---- 并发逐帧分析 ----
     results = {}

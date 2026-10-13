@@ -13,7 +13,7 @@ from datetime import datetime
 from openai import OpenAI
 
 from split_video import split_video
-from config import DASHSCOPE_API_KEY, BASE_URL, VLM_MODEL
+from config import BASE_URL, VLM_MODEL, require_dashscope
 import logging
 
 # ========== 1. 配置 ==========
@@ -88,7 +88,7 @@ def main():
     logger.info("Step 2: 逐段上传 Qwen3-VL 分析")
     logger.info("=" * 50)
 
-    client = OpenAI(api_key=DASHSCOPE_API_KEY, base_url=BASE_URL)
+    client = OpenAI(api_key=require_dashscope(), base_url=BASE_URL)
     results = []
 
     for i, seg in enumerate(segments):

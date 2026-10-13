@@ -7,6 +7,8 @@
     settings = get_settings()
 """
 import os
+import subprocess
+import sys
 from functools import lru_cache
 
 try:
@@ -77,6 +79,48 @@ class Settings(BaseSettings):
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-chat"
 
+    # ---- Agent1：Embedding（走本地 Ollama，索引依赖，建库后不可变）----
+    ollama_base_url: str = ""            # 空则按平台自动探测
+    embedding_model: str = "quentinz/bge-large-zh-v1.5"
+
+    # ---- Agent2：讯飞（在线听写 + 录音文件转写）----
+    xfyun_app_id: str = ""
+    xfyun_api_key: str = ""
+    xfyun_api_secret: str = ""
+    lfasr_secret_key: str = ""
+    lfasr_hot_words: str = ""
+
+    # ---- Agent2：离线 ASR ----
+    whisper_model_path: str = ""         # 空则使用 faster-whisper 默认缓存
+    whisper_download_root: str = ""      # 空则 agent2/models/whisper
+    vosk_model_path: str = ""
+
+    # ---- Agent2：本地 LLM / TTS ----
+    ollama_url: str = "http://localhost:11434/api/chat"
+    ollama_model: str = "qwen2.5:7b"
+    tts_voice_edge: str = "zh-CN-XiaoxiaoNeural"
+    tts_emotion: str = "正常"
+
+    # ---- Agent2/3：阿里云 CosyVoice / 百炼 ----
+    dashscope_api_key: str = ""
+    dashscope_workspace_id: str = ""
+    dashscope_region: str = "beijing"
+    cosyvoice_model: str = "cosyvoice-v2"
+    cloned_voice_id: str = ""
+
+    # ---- Agent3：百度 OCR ----
+    baidu_api_key: str = ""
+    baidu_secret_key: str = ""
+
+    # ---- Agent3：模型 ----
+    dashscope_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    vlm_model: str = "qwen3-vl-flash"    # 视觉理解
+    judge_model: str = "qwen-plus"       # 综合判断（纯文本推理）
+    yolo_weights: str = ""               # 空则用 ultralytics 默认模型
+
+    # ---- 模型缓存根目录（各 Agent 运行时产物）----
+    model_cache_dir: str = ""            # 空则 <project_root>/models
+
 
 @lru_cache
 def get_settings() -> Settings:
@@ -85,3 +129,53 @@ def get_settings() -> Settings:
 
 def project_root() -> str:
     return _ROOT
+
+
+# ==================== 派生路径与平台探测 ====================
+
+
+def agent_dir(name: str) -> str:
+    """返回 agent1/agent2/agent3 的绝对路径。"""
+    return os.path.join(_ROOT, name)
+
+
+def models_root() -> str:
+    """模型缓存根目录。"""
+    s = get_settings()
+    return s.model_cache_dir or os.path.join(_ROOT, "models")
+
+
+def ollama_base_url() -> str:
+    """Ollama 地址：显式配置 > 环境变量 > 平台默认。
+
+    Windows/macOS 直接用 localhost；Linux 尝试从默认路由推断宿主 IP。
+    """
+    s = get_settings()
+    if s.ollama_base_url:
+        return s.ollama_base_url
+    env = os.getenv("OLLAMA_BASE_URL")
+    if env:
+        return env
+    if os.name == "nt" or sys.platform == "darwin":
+        return "http://localhost:11434/v1"
+    try:
+        out = subprocess.check_output(
+            "ip route show default | awk '{print $3}'",
+            shell=True, timeout=2,
+        ).decode().strip()
+        if out:
+            return f"http://{out}:11434/v1"
+    except Exception:
+        pass
+    return "http://localhost:11434/v1"
+
+
+def whisper_device() -> tuple[str, str]:
+    """探测 Whisper 运行设备与计算精度，有 CUDA 用 GPU，否则 CPU。"""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return "cuda", "float16"
+    except ImportError:
+        pass
+    return "cpu", "int8"
