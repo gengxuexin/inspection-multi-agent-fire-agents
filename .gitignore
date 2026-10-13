@@ -1,0 +1,119 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# 虚拟环境
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# 测试与类型检查缓存
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+nosetests.xml
+
+# 环境变量与密钥（重要：切勿提交真实密钥）
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# IDE
+.idea/
+.vscode/
+.trae/
+*.iml
+*.ipr
+*.iws
+.DS_Store
+Thumbs.db
+
+# ---- 大文件：模型权重 ----
+agent2/models/
+models/
+*.pt
+*.pth
+*.onnx
+*.bin
+*.safetensors
+*.engine
+*.tflite
+
+# ---- 大文件：向量库索引（可用 build_index.py 重建）----
+agent1/faiss_full/
+agent1/faiss_single/
+agent1/faiss_multi/
+*.faiss
+*.pkl
+!*.pkl.template
+
+# ---- 大文件：知识库原始文档（含受控法规文本，需另行获取）----
+agent1/knowledge_base/
+
+# ---- 大文件：音视频样例 ----
+*.mp4
+*.avi
+*.mkv
+*.mov
+*.flv
+*.wmv
+*.webm
+*.wav
+*.mp3
+!demo_voice.mp3
+
+# ---- YOLO 训练产物与测试样例（体积大，可重新生成）----
+agent3/input/fire_yolo/
+agent3/input/*.mp4
+agent3/output/
+!agent3/output/.gitkeep
+
+# ---- 运行时产物 ----
+agent1/output/
+logs/
+checkpoints.sqlite
+*.sqlite
+*.sqlite3
+*.db
+
+# 训练/评估产物
+agent1/eval/report.json
+*.joblib
+
+# 临时文件
+tmp/
+temp/
+.cache/
+*.tmp
+*.bak
+*.orig

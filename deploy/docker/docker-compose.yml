@@ -1,0 +1,160 @@
+# 消防智能执法系统 · Docker Compose
+# 用法：
+#   基础启动：docker compose up -d redis gateway agent1 agent2 agent3
+#   含 Milvus：docker compose --profile milvus up -d
+#   含可观测：docker compose --profile obs up -d
+#   全量：docker compose --profile milvus --profile obs up -d
+services:
+  # ==================== 基础设施 ====================
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    volumes: ["redis-data:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ---- Milvus（可选，--profile milvus）----
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.5
+    profiles: ["milvus"]
+    environment:
+      ETCD_AUTO_COMPACTION_MODE: revision
+      ETCD_AUTO_COMPACTION_RETENTION: "1000"
+      ETCD_QUOTA_BACKEND_BYTES: "4294967296"
+    volumes: ["etcd-data:/etcd"]
+    command: etcd -advertise-client-urls=http://etcd:2379 -listen-client-urls http://0.0.0.0:2379
+
+  minio:
+    image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+    profiles: ["milvus"]
+    environment:
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+    volumes: ["minio-data:/minio/data"]
+    command: minio server /minio/data --console-address ":9001"
+    ports: ["9000:9000", "9001:9001"]
+
+  milvus:
+    image: milvusdb/milvus:v2.4.0
+    profiles: ["milvus"]
+    command: ["milvus", "run", "standalone"]
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+    ports: ["19530:19530"]
+    depends_on: [etcd, minio]
+    volumes: ["milvus-data:/var/lib/milvus"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ==================== 应用服务 ====================
+  gateway:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/gateway.Dockerfile
+      args:
+        BASE_IMAGE: ${BASE_IMAGE:-python:3.10-slim}
+    image: ${REGISTRY:-fire}-gateway:${TAG:-latest}
+    env_file: ../../.env
+    environment:
+      AGENT1_URL: http://agent1:8001
+      AGENT2_URL: http://agent2:8002
+      AGENT3_URL: http://agent3:8003
+      REDIS_URL: redis://redis:6379/0
+    ports: ["8000:8000"]
+    volumes:
+      - ../../logs:/app/logs
+    depends_on:
+      redis: { condition: service_healthy }
+
+  agent1:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/agent1.Dockerfile
+      args:
+        BASE_IMAGE: ${BASE_IMAGE:-python:3.10-slim}
+    image: ${REGISTRY:-fire}-agent1:${TAG:-latest}
+    env_file: ../../.env
+    environment:
+      AGENT1_URL: http://agent1:8001
+      REDIS_URL: redis://redis:6379/0
+      MILVUS_URI: ${MILVUS_URI:-}
+    ports: ["8001:8001"]
+    volumes:
+      - ../../agent1/knowledge_base:/app/agent1/knowledge_base
+      - ../../agent1/faiss_full:/app/agent1/faiss_full
+      - ../../agent1/templates:/app/agent1/templates
+      - ../../agent1/output:/app/agent1/output
+      - ../../agent1/kb_meta.yaml:/app/agent1/kb_meta.yaml
+      - ../../logs:/app/logs
+    depends_on:
+      redis: { condition: service_healthy }
+
+  agent2:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/agent2.Dockerfile
+      args:
+        BASE_IMAGE: ${BASE_IMAGE:-python:3.10-slim}
+    image: ${REGISTRY:-fire}-agent2:${TAG:-latest}
+    env_file: ../../.env
+    environment:
+      AGENT1_URL: http://agent1:8001
+    ports: ["8002:8002"]
+    volumes:
+      - ../../agent1/templates:/app/agent1/templates
+      - ../../agent1/output:/app/agent1/output
+      - ../../logs:/app/logs
+
+  agent3:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/agent3.Dockerfile
+      args:
+        BASE_IMAGE: ${BASE_IMAGE:-python:3.10-slim}
+    image: ${REGISTRY:-fire}-agent3:${TAG:-latest}
+    env_file: ../../.env
+    ports: ["8003:8003"]
+    volumes:
+      - ../../logs:/app/logs
+
+  # ==================== 可观测（可选，--profile obs）====================
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.90.1
+    profiles: ["obs"]
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otelcol/config.yaml:ro
+    ports: ["4317:4317", "4318:4318"]
+
+  langfuse:
+    image: langfuse/langfuse:2
+    profiles: ["obs"]
+    environment:
+      DATABASE_URL: postgresql://langfuse:langfuse@langfuse-db:5432/langfuse
+      NEXTAUTH_SECRET: changeme
+      SALT: changeme
+    ports: ["3000:3000"]
+    depends_on: [langfuse-db]
+
+  langfuse-db:
+    image: postgres:15-alpine
+    profiles: ["obs"]
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: langfuse
+      POSTGRES_DB: langfuse
+    volumes: ["langfuse-db-data:/var/lib/postgresql/data"]
+
+volumes:
+  redis-data:
+  etcd-data:
+  minio-data:
+  milvus-data:
+  langfuse-db-data:

@@ -1,0 +1,73 @@
+# 知识库文档元数据
+# build_index.py 读取此文件，为每个 chunk 注入 dept/role/secret_level/valid_until
+# retrieval_backend.py 据此做权限过滤
+#
+# secret_level: 0=公开 1=内部 2=秘密 3=机密 4=绝密
+# valid_until: 0=永久，否则 Unix 时间戳
+# doc_id: 自动用文件名生成（如未指定）
+
+# ==================== 全局默认值 ====================
+defaults:
+  dept: "通用"
+  role: "officer"
+  secret_level: 0
+  valid_until: 0
+
+# ==================== 按一级目录覆盖 ====================
+dirs:
+  "法律类":
+    dept: "通用"
+    role: "officer"
+    secret_level: 0
+    valid_until: 0
+
+  "法规规章类":
+    dept: "通用"
+    role: "officer"
+    secret_level: 0
+    valid_until: 0
+
+  "法律法规及规范性文件":
+    dept: "通用"
+    role: "officer"
+    secret_level: 0
+    valid_until: 0
+
+  "法律法规及规范性文件/行刑衔接":
+    dept: "通用"
+    role: "officer"
+    secret_level: 1
+    valid_until: 0
+
+  "规范性文件类":
+    dept: "通用"
+    role: "officer"
+    secret_level: 0
+    valid_until: 0
+
+  "规范性文件类/案件评查规则":
+    dept: "消防支队"
+    role: "officer"
+    secret_level: 1
+    valid_until: 0
+
+  "规范性文件类/案卷评查规则新":
+    dept: "消防支队"
+    role: "officer"
+    secret_level: 1
+    valid_until: 0
+
+  "规范性文件类/信用修复":
+    dept: "消防支队"
+    role: "officer"
+    secret_level: 1
+    valid_until: 0
+
+# ==================== 按文件名精确覆盖（优先级最高）====================
+# 如需对单篇文档设定不同权限，在此添加
+# files:
+#   "中华人民共和国消防法.pdf":
+#     doc_id: "law_fire_2021"
+#     dept: "通用"
+#     secret_level: 0
+files: {}

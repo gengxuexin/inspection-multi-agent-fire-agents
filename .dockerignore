@@ -1,0 +1,39 @@
+.git
+.gitignore
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+.venv
+venv
+env
+
+# 向量库（运行时挂载，不打入镜像）
+agent1/faiss_full
+agent1/faiss_single
+agent1/faiss_multi
+
+# 知识库原始文件（运行时挂载）
+agent1/knowledge_base
+
+# 模型文件
+agent1/models
+models
+
+# 输出文件
+agent1/output
+agent1/templates
+
+# 日志
+logs
+*.log
+
+# 文档
+*.md
+.trae
+tests
+
+# Docker 自身
+deploy/docker
+Dockerfile*
+docker-compose*
