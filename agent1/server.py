@@ -51,7 +51,9 @@ setup_tracing(app)
 PENDING_DIR = os.path.join(OUTPUT_DIR, "pending")
 OFFICIAL_DIR = os.path.join(OUTPUT_DIR, "official")
 REVIEWS_DIR = os.path.join(OUTPUT_DIR, "reviews")
-for _d in (PENDING_DIR, OFFICIAL_DIR, REVIEWS_DIR):
+# 原稿快照：机器生成时的原始内容，供审批时与人工改后稿做 diff
+ORIGIN_DIR = os.path.join(OUTPUT_DIR, "pending", ".origin")
+for _d in (PENDING_DIR, OFFICIAL_DIR, REVIEWS_DIR, ORIGIN_DIR):
     os.makedirs(_d, exist_ok=True)
 
 
@@ -172,9 +174,16 @@ def api_generate_doc(req: DocReq, _: None = Depends(require_internal_token)):
                                             f"{review_id}_{tpl_name}")
                 shutil.copy2(out_path, pending_path)
 
+                # ★ 存原稿快照 —— 人工修改后就没法还原了，
+                #   审批时靠它与改后的稿做 diff
+                origin_path = os.path.join(ORIGIN_DIR,
+                                           f"{review_id}_{tpl_name}")
+                shutil.copy2(out_path, origin_path)
+
                 item = {
                     "template": tpl_name,
                     "draft_path": pending_path,
+                    "origin_path": origin_path,
                     "size_bytes": os.path.getsize(pending_path),
                 }
 
@@ -234,7 +243,14 @@ def list_reviews(_: None = Depends(require_internal_token)):
 
 @app.post("/api/doc/review/{review_id}/approve")
 def approve_review(review_id: str, _: None = Depends(require_internal_token)):
-    """approve 草稿：移动文件到 official/，更新状态为 approved。"""
+    """approve 草稿：检测人工改动 -> 移动文件到 official/ -> 更新状态。
+
+    ★ 改动检测：生成时已把原稿快照存到 output/pending/.origin/，
+      此处拿快照与人工改过的稿逐份对比，产出改动分析报告。
+      报告落在 output/change_reports/，供管理员复核。
+      use_llm=False —— 审批是同步接口，不能被 LLM 拖慢；
+      需要语义归因时用 CLI 跑 change_detector.py 重新生成。
+    """
     review_path = os.path.join(REVIEWS_DIR, f"{review_id}.json")
     if not os.path.isfile(review_path):
         return {"status": "error", "message": f"审批记录不存在：{review_id}"}
@@ -245,6 +261,35 @@ def approve_review(review_id: str, _: None = Depends(require_internal_token)):
     if rec.get("status") == "approved":
         return {"status": "success", "message": "已审批通过，无需重复操作",
                 "review_id": review_id}
+
+    # ---- 人工改动检测（失败不阻断审批）----
+    change_reports = []
+    try:
+        from change_detector import analyze_changes
+        for item in rec.get("files", []):
+            draft = item.get("draft_path", "")
+            origin = item.get("origin_path", "")
+            if not (draft and origin and
+                    os.path.isfile(draft) and os.path.isfile(origin)):
+                continue
+            rep = analyze_changes(
+                origin, draft, review_id=review_id, use_llm=False,
+            )
+            change_reports.append({
+                "file": os.path.basename(draft),
+                "report_id": rep.report_id,
+                "total_changes": rep.total_changes,
+                "high_risk_count": rep.high_risk_count,
+                "summary": rep.summary,
+                "json_path": rep.json_path,
+                "markdown_path": rep.markdown_path,
+            })
+    except Exception as e:
+        # 报告生成失败不该让审批失败 —— 记录后继续归档
+        traceback.print_exc()
+        change_reports = [{"error": f"改动检测失败：{e}"}]
+        audit_event("change_detect_failed", review_id=review_id,
+                    error=str(e)[:200])
 
     moved = []
     for item in rec.get("files", []):
@@ -257,13 +302,48 @@ def approve_review(review_id: str, _: None = Depends(require_internal_token)):
 
     rec["status"] = "approved"
     rec["approved_at"] = time.time()
+    rec["change_reports"] = change_reports
     with open(review_path, "w", encoding="utf-8") as f:
         json.dump(rec, f, ensure_ascii=False, indent=2)
 
-    audit_event("doc_review_approve", review_id=review_id, files=len(moved))
+    high_risk = sum(r.get("high_risk_count", 0) for r in change_reports
+                    if isinstance(r, dict))
+    audit_event("doc_review_approve", review_id=review_id, files=len(moved),
+                high_risk_changes=high_risk)
+    return {
+        "status": "success",
+        "review_id": review_id,
+        "official_files": moved,
+        "change_reports": change_reports,
+        "high_risk_count": high_risk,
+        "message": "草稿已审批通过，移入 output/official/"
+                   + (f"；检测到 {high_risk} 处高风险改动，请管理员复核报告"
+                      if high_risk else ""),
+    }
+
+
+@app.get("/api/doc/change-reports/{review_id}")
+def get_change_reports(review_id: str, _: None = Depends(require_internal_token)):
+    """取某次审批的改动分析报告（含每处改动明细）。"""
+    from change_detector import REPORT_DIR, safe_filename
+    # review_id 来自 URL，必须用与落盘相同的清洗规则，否则 glob 匹配不到
+    safe_id = safe_filename(review_id)
+    files = sorted(glob.glob(
+        os.path.join(REPORT_DIR, f"{safe_id}_CR-*.json")))
+    if not files:
+        return {"status": "not_found", "review_id": review_id,
+                "message": "未找到改动报告"}
+    reports = []
+    for fp in files:
+        try:
+            with open(fp, "r", encoding="utf-8") as f:
+                reports.append(json.load(f))
+        except Exception:
+            continue
+    high = sum(r.get("high_risk_count", 0) for r in reports)
     return {"status": "success", "review_id": review_id,
-            "official_files": moved,
-            "message": "草稿已审批通过，移入 output/official/"}
+            "count": len(reports), "high_risk_count": high,
+            "reports": reports}
 
 
 @app.post("/api/doc/review/{review_id}/reject")
