@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import sys
 import time
 from typing import Any, Optional
@@ -44,6 +45,11 @@ logger = logging.getLogger("fire_agents.retrieval")
 DEFAULT_CLEARANCE = 2
 DEFAULT_DEPT = "消防支队"
 
+# 检索条数默认值。RAGAS 实测：top_k=20 时 context_precision 仅 0.165，
+# 大量噪声片段进入 prompt。默认压到 5，可由调用方按需上调。
+DEFAULT_TOP_K = 5
+MAX_TOP_K = 10
+
 
 # ==================== UserCtx 兼容 ====================
 def _normalize_user_ctx(user_ctx: Any = None) -> tuple[str, int]:
@@ -62,28 +68,35 @@ def _normalize_user_ctx(user_ctx: Any = None) -> tuple[str, int]:
 
 # ==================== Embedding 单例 ====================
 _embed_client = None
-_embed_dim = 1024  # bge-large-zh-v1.5
 
 
 def _get_embed_client():
-    """惰性创建 OpenAI 兼容 embedding 客户端（指向 Ollama）。"""
+    """惰性创建 OpenAI 兼容 embedding 客户端。
+
+    ★ 网络策略：云端 provider 必须 trust_env=True 走系统代理；
+      本地 Ollama 用 trust_env=False 避免代理劫持内网请求。
+    """
     global _embed_client
     if _embed_client is not None:
         return _embed_client
     from config import get_embedding_config
     cfg = get_embedding_config()
+    is_local = cfg.get("provider") == "ollama"
     from openai import OpenAI
     _embed_client = OpenAI(
         api_key=cfg["api_key"],
         base_url=cfg["base_url"],
-        timeout=60,
-        http_client=httpx.Client(trust_env=False, timeout=60),
+        timeout=cfg.get("timeout", 120),
+        http_client=httpx.Client(
+            trust_env=not is_local,
+            timeout=cfg.get("timeout", 120),
+        ),
     )
     return _embed_client
 
 
 def _embed_query(query: str) -> list[float]:
-    """把查询文本转向量（1024 维）。"""
+    """把查询文本转向量。维度由 embedding 配置决定（不硬编码）。"""
     from config import get_embedding_config
     cfg = get_embedding_config()
     client = _get_embed_client()
@@ -216,10 +229,14 @@ def _get_faiss_hybrid():
     from hybrid import get_hybrid
 
     emb_cfg = get_embedding_config()
+    is_local = emb_cfg.get("provider") == "ollama"
     embeddings = OpenAIEmbeddings(
         model=emb_cfg["model"], api_key=emb_cfg["api_key"],
         base_url=emb_cfg["base_url"], check_embedding_ctx_length=False,
-        http_client=_httpx.Client(trust_env=False, timeout=60),
+        http_client=_httpx.Client(
+            trust_env=not is_local,
+            timeout=emb_cfg.get("timeout", 120),
+        ),
     )
     hybrid = get_hybrid(index_dir, embeddings)
     _hybrid_cache[cache_key] = hybrid
@@ -240,10 +257,33 @@ def _passes_filter(metadata: dict, dept: str, clearance: int) -> bool:
     return True
 
 
+# ==================== 片段质量过滤 ====================
+# 检索侧的第二道闸门：即便精排把噪声排后了，
+# 仍需拦住"纯页眉/目录/空白"这类无信息量片段，避免它们占用 top-k 名额。
+_MIN_USEFUL_CHARS = 24
+_RE_CJK = re.compile(r"[一-鿿]")
+
+
+def _is_useful(content: str) -> bool:
+    """片段是否含足够有效信息。
+
+    判据（任一不满足即丢弃）：
+      - 长度 < 24 字符
+      - 中文字符 < 8 个（纯英文/数字/符号页码片段）
+    """
+    if not content:
+        return False
+    if len(content.strip()) < _MIN_USEFUL_CHARS:
+        return False
+    if len(_RE_CJK.findall(content)) < 8:
+        return False
+    return True
+
+
 def _faiss_search(
     query: str, top_k: int, dept: str, clearance: int
 ) -> list[dict]:
-    """FAISS + BM25 混合检索 + metadata 权限过滤。"""
+    """FAISS + BM25 混合检索 + metadata 权限过滤 + 片段质量过滤。"""
     hybrid = _get_faiss_hybrid()
     # 扩大候选池以补偿过滤后的损失
     pool = max(top_k * 5, 20)
@@ -255,6 +295,8 @@ def _faiss_search(
         meta = dict(d.metadata or {})
         if not _passes_filter(meta, dept, clearance):
             continue
+        if not _is_useful(d.page_content):
+            continue
         out.append({
             "content": d.page_content,
             "source": meta.get("source", "?"),
@@ -264,8 +306,9 @@ def _faiss_search(
         if len(out) >= top_k:
             break
 
-    # 如果过滤后结果不足，放宽限制（去掉 dept 过滤）兜底
+    # 如果过滤后结果不足，放宽 dept 限制兜底（但保留密级与时效约束）
     if len(out) < top_k:
+        seen = {r["content"] for r in out}
         for d in docs:
             meta = dict(d.metadata or {})
             doc_secret = int(meta.get("secret_level", 0))
@@ -275,8 +318,9 @@ def _faiss_search(
             if valid_until and valid_until < now_ts:
                 continue
             content = d.page_content
-            if content in [r["content"] for r in out]:
+            if content in seen or not _is_useful(content):
                 continue
+            seen.add(content)
             out.append({
                 "content": content,
                 "source": meta.get("source", "?"),
@@ -292,16 +336,22 @@ def _faiss_search(
 # ==================== 统一入口 ====================
 def search(
     query: str,
-    top_k: int = 8,
+    top_k: int = DEFAULT_TOP_K,
     user_ctx: Any = None,
 ) -> list[dict]:
     """统一检索：Milvus 优先，FAISS 回退。
 
     :param query:     查询文本
-    :param top_k:     返回条数
+    :param top_k:     返回条数（默认 5，上限 MAX_TOP_K=10；
+                      实测top_k 越大噪声越多，RAGAS context_precision 越低）
     :param user_ctx:  用户上下文（common.auth.UserCtx 或含 dept/clearance 属性的对象）
     :return:          [{content, source, score, metadata}, ...]
     """
+    if not query or not query.strip():
+        return []
+    # 收敛到合理区间：过多片段会把噪声一起塞进 prompt
+    top_k = max(1, min(int(top_k), MAX_TOP_K))
+
     dept, clearance = _normalize_user_ctx(user_ctx)
 
     # 1) 尝试 Milvus
@@ -320,7 +370,7 @@ def search(
         return []
 
 
-def search_docs(query: str, top_k: int = 8, user_ctx: Any = None):
+def search_docs(query: str, top_k: int = DEFAULT_TOP_K, user_ctx: Any = None):
     """返回 langchain Document 列表（兼容 rag_module.py / rag_legal_advisor.py）。"""
     from langchain_core.documents import Document
     results = search(query, top_k, user_ctx)

@@ -1,3 +1,4 @@
+
 """
 分批次构建 FAISS 向量库
 - 支持增量添加
@@ -12,11 +13,11 @@ import time
 import argparse
 import httpx
 import yaml
+from typing import ClassVar
 from tqdm import tqdm
 from pypdf import PdfReader
 from langchain_core.documents import Document
 from langchain_openai import OpenAIEmbeddings
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 
 # ★ 让脚本能找到同目录的 config / file_analyzer
@@ -26,6 +27,7 @@ if _SCRIPT_DIR not in sys.path:
 
 from config import get_embedding_config
 from file_analyzer import extract_text
+from chunking import LegalChunker
 
 # ==================== 配置 ====================
 MODE = "full"     # single / multi / full
@@ -36,8 +38,14 @@ MODE_CONFIG = {
     "full":   {"kb_dir": "knowledge_base/full",   "index_dir": "faiss_full"},
 }
 
+# ---- 分块参数 ----
+# 改造说明：原先统一用 RecursiveCharacterTextSplitter 按 500 字硬切，
+# 法条被拦腰截断（第六十条第一款劈成两半，任一片段都不完整），
+# 直接导致 context_recall 低。现改为 LegalChunker —— 法条边界优先切分。
+# 法条本身普遍较短，故调小窗口以提升单块语义纯度。
 CHUNK_SIZE = 500
 CHUNK_OVERLAP = 100
+MIN_CHUNK = 40          # 短于此且不含法条号的片段视为噪声
 BATCH_SIZE = 100
 EMBED_SUB_BATCH = 64      # ★ 每多少条 chunk 调一次 Ollama（越小进度条越细，但调用越频繁）
 SUPPORTED_EXT = ("pdf", "docx", "doc", "pptx", "ppt", "txt", "md", "json", "csv", "chm", "jpg", "jpeg", "png")
@@ -96,33 +104,118 @@ def _get_meta_for_file(file_path: str) -> dict:
     return result
 
 
-# ==================== ★ 带进度条的 Embeddings ====================
+# ==================== ★ Embeddings（云端批量 + 进度条）====================
 class ProgressEmbeddings(OpenAIEmbeddings):
     """
-    包裹 OpenAIEmbeddings：
-    在 embed_documents 里分批调用 + tqdm 进度条，
-    这样 FAISS.from_documents / add_documents 触发向量化时，
-    终端就会显示实时进度。
+    包裹 OpenAIEmbeddings，为云端 Embedding API 做三件事：
+
+    1. **批量调用**：云端单请求有文本数上限（DashScope 为 10），按批切分，
+       相比逐条调用吞吐提升一个数量级。
+    2. **指数退避重试**：云端有速率限制与偶发 5xx，遇到429/5xx 自动重试，
+       不让整库构建因为单次抖动前功尽弃。
+    3. **维度自检**：首批返回时校验维度，与配置不符立即报错 ——
+       维度错了但索引建成，检索时结果是乱的且很难排查。
+
+    本地 Ollama（EMBEDDING_PROVIDER=ollama）也走这里，
+    只是批量大小由配置决定，逻辑一致。
     """
+
+    # ★ Pydantic 字段声明：未在类里声明的名字，__init__ 里赋值会被 __setattr__ 拦截
+    #   （报错 "object has no field ..."）。必须在此显式声明为字段。
+    expect_dim: int | None = None
+    batch_size: int = 10
+
+    # 需要重试的瞬时错误关键词（ClassVar 明确告诉 Pydantic 这是类常量、不是字段）
+    _RETRYABLE: ClassVar[tuple] = ("rate limit", "429", "500", "502", "503", "504",
+                                   "timeout", "temporarily", "overloaded")
+
+    def __init__(self, *args, expect_dim: int | None = None,
+                 batch_size: int = 10, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.expect_dim = expect_dim
+        self.batch_size = max(1, int(batch_size or 10))
+
+    def _embed_with_retry(self, batch: list[str], max_retries: int = 4):
+        """单批向量化，指数退避重试。"""
+        last_err: Exception | None = None
+        for attempt in range(max_retries + 1):
+            try:
+                return super().embed_documents(batch)
+            except Exception as e:
+                last_err = e
+                msg = str(e).lower()
+                if not any(k in msg for k in self._RETRYABLE):
+                    raise  # 非瞬时错误（如 key 失效、维度不合法），直接抛
+                if attempt >= max_retries:
+                    break
+                wait = min(2 ** attempt, 16)
+                print(f"\n  ⚠️ 向量批失败（{type(e).__name__}），"
+                      f"{wait}s 后第 {attempt + 2} 次重试...")
+                time.sleep(wait)
+        raise RuntimeError(
+            f"向量化重试 {max_retries} 次仍失败：{last_err}"
+        )
+
     def embed_documents(self, texts):
         total = len(texts)
-        pbar = tqdm(
-            total=total,
-            desc="🧠 向量化",
-            ncols=90,
-            unit="chunk",
-            leave=False,          # 结束后不残留
-        )
-        results = []
+        if total == 0:
+            return []
+
+        pbar = tqdm(total=total, desc="🧠 向量化", ncols=90,
+                    unit="chunk", leave=False)
+        results: list[list[float]] = []
         try:
-            for i in range(0, total, EMBED_SUB_BATCH):
-                sub = texts[i:i + EMBED_SUB_BATCH]
-                vecs = super().embed_documents(sub)
+            for i in range(0, total, self.batch_size):
+                batch = texts[i:i + self.batch_size]
+                vecs = self._embed_with_retry(batch)
+
+                # 维度自检：只在首批做一次
+                if self.expect_dim and not results:
+                    got = len(vecs[0])
+                    if got != self.expect_dim:
+                        raise RuntimeError(
+                            f"Embedding 维度不符：配置 {self.expect_dim} 维，"
+                            f"实际返回 {got} 维。\n"
+                            f"换模型后必须重建索引（--rebuild），否则检索结果无意义。"
+                        )
+
                 results.extend(vecs)
-                pbar.update(len(sub))
+                pbar.update(len(batch))
         finally:
             pbar.close()
+
         return results
+
+
+def _precheck_embedding(embeddings, expect_dim: int) -> None:
+    """建库前连通性自检 —— 避免跑了 3 小时才发现 key 填错。
+
+    顺序很关键：先验连通（1 次调用），再验维度（关系到索引正确性）。
+    """
+    print("🔌 预检 Embedding 服务...")
+    probe = "这是一段用于连通性检查的短文本。"
+    try:
+        vec = embeddings.embed_query(probe)
+    except Exception as e:
+        raise SystemExit(
+            f"\n❌ Embedding 服务不可达：{e}\n\n"
+            f"排查清单：\n"
+            f"  1) .env 里 EMBEDDING_API_KEY / DASHSCOPE_API_KEY 是否已填\n"
+            f"  2) 密钥是否已失效（去阿里云百炼控制台确认）\n"
+            f"  3) EMBEDDING_BASE_URL 是否正确（应为空或 compatible-mode 地址）\n"
+            f"  4) 若走代理，确认 HTTP_PROXY / HTTPS_PROXY 环境变量已设置\n"
+            f"  5) 想退回本地：把 EMBEDDING_PROVIDER 改为 ollama\n"
+        ) from e
+
+    got = len(vec)
+    if got != expect_dim:
+        raise SystemExit(
+            f"\n❌ 向量维度不符：配置 {expect_dim} 维，实际 {got} 维\n"
+            f"   换 Embedding 模型后索引维度会变，必须用 --rebuild 重建，"
+            f"否则检索结果无意义。\n"
+            f"   当前模型：{embeddings.model}"
+        )
+    print(f"✅ 预检通过：{embeddings.model}  {got} 维\n")
 
 
 # ==================== 状态文件 ====================
@@ -228,6 +321,42 @@ def _milvus_insert(client, collection_name: str, chunks: list, embeddings):
     return len(vectors)
 
 
+# ==================== 分块标记落库核查 ====================
+def _report_chunk_marks():
+    """重建后报告索引里 is_catalog / is_tier_table 的实际数量。
+
+    这是"索引重建是否真的生效"的**唯一可信证据**。
+    改动分块策略后评测分数常常纹丝不动，肉眼无法区分
+    "策略无效"和"索引没重建"—— 只能直接查落库的标记。
+
+    预期基线（103 文件 / 4019 chunk 实测）：
+        is_catalog     268  —— 两份消防产品目录
+        is_tier_table    9  —— 两份裁量规定
+    is_tier_table 从早期的 79 降到 9 是**正确的**：其中 45 个原本是
+    目录公告被误判成档位表，目录条目切分（P4）后不再走档位分支。
+    """
+    pkl = os.path.join(_INDEX_DIR, "index.pkl")
+    if not os.path.isfile(pkl):
+        return
+    try:
+        import pickle as _pk
+        with open(pkl, "rb") as f:
+            obj = _pk.load(f)
+        store = obj[0] if isinstance(obj, tuple) else obj
+        raw = getattr(store, "_dict", store)
+        docs = list(raw.values()) if hasattr(raw, "values") else list(raw)
+        n_cat = sum(1 for d in docs if (getattr(d, "metadata", None) or {})
+                    .get("is_catalog"))
+        n_tier = sum(1 for d in docs if (getattr(d, "metadata", None) or {})
+                     .get("is_tier_table"))
+        print(f"   分块标记：is_catalog={n_cat}  is_tier_table={n_tier}")
+        if n_cat == 0 and n_tier == 0:
+            print("   ⚠️ 两个标记都是 0，说明新分块策略未生效"
+                  "（检查 chunking.py 是否为最新版）")
+    except Exception as e:
+        print(f"   分块标记核查跳过：{e}")
+
+
 # ==================== 主流程 ====================
 def main():
     parser = argparse.ArgumentParser(description="构建向量知识库")
@@ -235,6 +364,9 @@ def main():
                         help="向量库后端（默认 faiss）")
     parser.add_argument("--mode", choices=["single", "multi", "full"], default=MODE,
                         help="知识库模式（默认 full）")
+    parser.add_argument("--rebuild", "--force", dest="rebuild",
+                        action="store_true",
+                        help="强制全量重建（分块策略变更后必须加，否则会跳过已处理文件）")
     args = parser.parse_args()
 
     global _KB_DIR, _INDEX_DIR, _STATE_FILE
@@ -250,6 +382,52 @@ def main():
     print(f"📂 知识库目录：{_KB_DIR}")
     if backend == "faiss":
         print(f"📂 索引目录：{_INDEX_DIR}\n")
+
+        # ★ 分块策略自检
+        #
+        # 这个检查是被真实事故逼出来的：连续两轮改了分块策略（P1 表格
+        # 重组、P4 目录条目切分），评测分数纹丝不动，排查半天才发现
+        # **索引根本没重建** —— 检索跑的还是三个月前的旧 chunk。
+        #
+        # 症状识别：改了 chunking.py 但所有检索结果完全不变。
+        # 因此这里主动检查"索引元数据是否包含新分块策略的标记字段"。
+        #
+        # 关键：带 --rebuild 时旧索引马上就要被删，此时报"疑似未重建"
+        # 是**必然为真的假警报**（实测已误导过一次：刚加的自检第一次
+        # 跑出来就是报警，而同一次运行结尾成功写了 4019 块新索引）。
+        # 所以重建模式下只提示、不报警，把判定交给重建后的实际统计。
+        _rebuilding = bool(getattr(args, "rebuild", False))
+        _pkl = os.path.join(_INDEX_DIR, "index.pkl")
+        if _rebuilding and os.path.isfile(_pkl):
+            print("🔄 --rebuild：旧索引即将删除，跳过前置标记检查"
+                  "（重建后报告实际标记数）\n")
+        elif os.path.isfile(_pkl):
+            try:
+                import pickle as _pk
+                with open(_pkl, "rb") as _f:
+                    _obj = _pk.load(_f)
+                _store = _obj[0] if isinstance(_obj, tuple) else _obj
+                _raw = getattr(_store, "_dict", _store)
+                _docs = list(_raw.values()) if hasattr(_raw, "values") \
+                    else list(_raw)
+                # 新分块策略的标记字段（LegalChunker 写入）
+                _need = {"is_catalog", "is_tier_table"}
+                _have = set()
+                for _d in _docs[:50]:
+                    _have |= set((getattr(_d, "metadata", None) or {}).keys())
+                _missing = _need - _have
+                if _missing:
+                    print("⚠️⚠️ 索引疑似未重建！")
+                    print(f"   元数据缺少分块标记：{sorted(_missing)}")
+                    print("   说明当前 chunking.py 与索引内容不同步，")
+                    print("   检索结果不会反映新的分块策略。")
+                    print(f"   请执行：python build_index.py --rebuild\n")
+                else:
+                    print(f"✅ 分块标记检查通过（{len(_docs)} chunk）\n")
+            except Exception as _e:
+                print(f"⚠️ 索引自检跳过：{_e}\n")
+        elif not args.rebuild:
+            print("ℹ️  未找到既有索引，将执行全量构建\n")
     else:
         try:
             from common.config import get_settings
@@ -273,8 +451,19 @@ def main():
     print(f"📊 共扫描到 {len(all_files)} 个支持的文件\n")
 
     # 2. 断点续传
-    processed = _load_state()
-    todo = [f for f in all_files if _file_fingerprint(f) not in processed]
+    if args.rebuild:
+        print("🔄 --rebuild：忽略断点记录，全量重建\n")
+        processed = set()
+        todo = list(all_files)
+        if backend == "faiss":
+            for fn in ("index.faiss", "index.pkl"):
+                p = os.path.join(_INDEX_DIR, fn)
+                if os.path.isfile(p):
+                    os.remove(p)
+                    print(f"   已删除旧索引文件：{fn}")
+    else:
+        processed = _load_state()
+        todo = [f for f in all_files if _file_fingerprint(f) not in processed]
 
     index_complete = True
     if backend == "faiss":
@@ -294,24 +483,48 @@ def main():
               else "⚠️ 没有待处理文件，但索引不存在")
         return
 
-    # 3. 分块器
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP,
-        separators=["\n\n", "\n", "。", "！", "？", "；", " ", ""],
+    # 3. 分块器（法条感知：按"第X条"边界切，chunk 带law/article 元数据）
+    splitter = LegalChunker(
+        chunk_size=CHUNK_SIZE,
+        chunk_overlap=CHUNK_OVERLAP,
+        min_chunk=MIN_CHUNK,
     )
 
-    # 4. 嵌入模型（★ 用带进度条的类）
+    # 4. 嵌入模型（云端批量 + 进度条）
     cfg = get_embedding_config()
+    # ★ 网络策略：云端 API 必须走系统代理（trust_env=True），
+    #   本地 Ollama 才需要 trust_env=False 避免代理劫持内网请求。
+    #   这里按provider 分开，是换API 后最容易踩的坑。
+    is_local = cfg.get("provider") == "ollama"
+    print(f"📐Embedding: {cfg['model']}  "
+          f"provider={cfg.get('provider')}  dim={cfg.get('dim')}  "
+          f"batch={cfg.get('batch_size')}  代理={'关闭' if is_local else '开启'}")
     embeddings = ProgressEmbeddings(
         model=cfg["model"], api_key=cfg["api_key"],
         base_url=cfg["base_url"], check_embedding_ctx_length=False,
-        http_client=httpx.Client(trust_env=False, timeout=300),
+        expect_dim=cfg.get("dim"),
+        batch_size=cfg.get("batch_size", 10),
+        http_client=httpx.Client(
+            trust_env=not is_local,
+            timeout=cfg.get("timeout", 120),
+        ),
     )
+    # 连通性 + 维度预检：跑3 小时才发现 key 填错是最糟的失败方式
+    _precheck_embedding(embeddings, cfg.get("dim", 1024))
 
     # 5. 后端初始化
     mv_client = None
     vectorstore = None
     if backend == "milvus":
+        if args.rebuild:
+            try:
+                from pymilvus import MilvusClient
+                probe = MilvusClient(uri=milvus_uri)
+                if probe.has_collection(collection):
+                    probe.drop_collection(collection)
+                    print(f"🗑️  --rebuild：已删除 collection '{collection}'")
+            except Exception as e:
+                print(f"⚠️ 清理旧 collection 失败（继续重建）: {e}")
         mv_client = _milvus_init(milvus_uri, collection)
     else:
         if os.path.isfile(index_file) and os.path.isfile(pkl_file):
@@ -396,6 +609,7 @@ def main():
         print(f"   Milvus collection: {collection}")
     else:
         print(f"   索引目录：{_INDEX_DIR}")
+        _report_chunk_marks()
     print("=" * 60)
 
 

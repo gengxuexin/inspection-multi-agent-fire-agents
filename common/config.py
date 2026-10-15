@@ -79,9 +79,25 @@ class Settings(BaseSettings):
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-chat"
 
-    # ---- Agent1：Embedding（走本地 Ollama，索引依赖，建库后不可变）----
+    # ---- Agent1：Embedding（索引依赖，建库后不可变）----
+    # 本地 Ollama 向量化 3841 块需 3 小时以上（3.04s/chunk），已改为云端 API。
+    # 选型：阿里云 text-embedding-v4
+    #   - 维度 1024，与既有 FAISS 索引（bge-large-zh-v1.5）**完全一致**，
+    #     换API 无需改动索引维度，重建即可
+    #   - 中文语义检索专项优化，匹配法律条文场景
+    #   - 前 1000 万 token 免费（3841 chunk ×约 400 字 ≈ 150 万字，一次性重建足够）
+    #   - 提供 OpenAI 兼容端点，现有 OpenAI SDK 代码零改动
+    embedding_provider: str = "dashscope"     # dashscope（云端）| ollama（本地）
+    embedding_api_key: str = ""                # 云端 key；留空则复用 DASHSCOPE_API_KEY
+    embedding_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    embedding_model: str = "text-embedding-v4"
+    embedding_dim: int = 1024                  # ⚠️ 换模型必须核对，维度变了索引要重建
+    embedding_batch_size: int = 10# 云端单批文本数（DashScope 单请求上限 10）
+    embedding_timeout: int = 120# 单次请求超时（秒）
+
+    # ---- 本地 Ollama（embedding_provider=ollama 时回退使用）----
     ollama_base_url: str = ""            # 空则按平台自动探测
-    embedding_model: str = "quentinz/bge-large-zh-v1.5"
+    ollama_embedding_model: str = "quentinz/bge-large-zh-v1.5"
 
     # ---- Agent2：讯飞（在线听写 + 录音文件转写）----
     xfyun_app_id: str = ""
@@ -179,3 +195,46 @@ def whisper_device() -> tuple[str, str]:
     except ImportError:
         pass
     return "cpu", "int8"
+
+
+def embedding_settings() -> dict:
+    """解析后的 Embedding 配置，供 agent1 统一消费。
+
+    优先级：EMBEDDING_API_KEY > DASHSCOPE_API_KEY（同一个阿里云账号，
+    避免让用户为embedding 再配一份 key）。
+
+    :return: {provider, api_key, base_url, model, dim, batch_size, timeout}
+    :raises RuntimeError: 云端模式下两者都未配置时
+    """
+    s = get_settings()
+    provider = (s.embedding_provider or "dashscope").strip().lower()
+
+    if provider == "ollama":
+        return {
+            "provider": "ollama",
+            "api_key": "ollama",
+            "base_url": ollama_base_url(),
+            "model": s.ollama_embedding_model or "quentinz/bge-large-zh-v1.5",
+            "dim": 1024,
+            "batch_size": 8,
+            "timeout": int(s.embedding_timeout or 120),
+        }
+
+    key = (s.embedding_api_key or s.dashscope_api_key or "").strip()
+    if not key:
+        raise RuntimeError(
+            "云端 Embedding 未配置密钥。请在项目根 .env 里设置其一：\n"
+            "  EMBEDDING_API_KEY=sk-你的阿里云百炼密钥   （推荐，独立管理）\n"
+            "  DASHSCOPE_API_KEY=sk-...              （与 Agent3 共用同一把）\n"
+            "若想退回本地 Ollama，把 EMBEDDING_PROVIDER 设为 ollama。"
+        )
+    return {
+        "provider": "dashscope",
+        "api_key": key,
+        "base_url": s.embedding_base_url
+        or "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "model": s.embedding_model or "text-embedding-v4",
+        "dim": int(s.embedding_dim or 1024),
+        "batch_size": max(1, min(int(s.embedding_batch_size or 10), 10)),
+        "timeout": int(s.embedding_timeout or 120),
+    }

@@ -5,7 +5,8 @@
 本模块只保留 Agent1 特有的 LLM / Embedding 客户端与工具函数。
 
 - LLM：DeepSeek 官方 API（云端，走系统代理）
-- Embedding：本地 Ollama（索引依赖，建库后不可变）
+- Embedding：云端 API（阿里云 text-embedding-v4，OpenAI 兼容）
+            本地 Ollama 仍可通过 EMBEDDING_PROVIDER=ollama 启用
 """
 import json
 import logging
@@ -19,7 +20,7 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
-from common.config import get_settings, ollama_base_url
+from common.config import embedding_settings, get_settings, ollama_base_url
 
 logger = logging.getLogger("fire_agents.agent1")
 
@@ -27,7 +28,9 @@ logger = logging.getLogger("fire_agents.agent1")
 _s = get_settings()
 
 OLLAMA_BASE = ollama_base_url()
-DEFAULT_EMB_MODEL = _s.embedding_model   # ★ 必须和建库时一致
+
+# ★ Embedding 配置在首次调用时懒解析（缺 key 时不该import 就崩）
+DEFAULT_EMB_MODEL = _s.embedding_model
 
 DEEPSEEK_API_KEY = _s.deepseek_api_key
 DEEPSEEK_BASE_URL = _s.deepseek_base_url
@@ -74,13 +77,24 @@ def get_llm_model():
     return get_deepseek_config()["model"]
 
 
-# ==================== Embedding 客户端（Ollama）====================
-def set_embedding(api_key="ollama", base_url=None, model=None):
+# ==================== Embedding 客户端 ====================
+def set_embedding(api_key=None, base_url=None, model=None):
+    """初始化 Embedding 配置（幂等）。默认走common.config 的解析结果。"""
     global _emb_config
+    cfg = embedding_settings()
+    if api_key or base_url or model:
+        logger.warning(
+            "[config] set_embedding 显式入参覆盖已生效。"
+            "建议改用 .env 的 EMBEDDING_* 配置，避免多处设置不一致。"
+        )
     _emb_config = {
-        "api_key": "ollama",
-        "base_url": base_url or OLLAMA_BASE,
-        "model": model or DEFAULT_EMB_MODEL,
+        "api_key": api_key or cfg["api_key"],
+        "base_url": base_url or cfg["base_url"],
+        "model": model or cfg["model"],
+        "provider": cfg["provider"],
+        "dim": cfg["dim"],
+        "batch_size": cfg["batch_size"],
+        "timeout": cfg["timeout"],
     }
 
 
@@ -88,6 +102,11 @@ def get_embedding_config():
     if not _emb_config:
         set_embedding()
     return _emb_config
+
+
+def get_embedding_dim() -> int:
+    """向量维度。⚠️ 换模型时必须核对，维度与既有 FAISS 索引不一致会检索错乱。"""
+    return int(get_embedding_config().get("dim") or 1024)
 
 
 # ==================== JSON 容错解析 ====================
@@ -156,7 +175,6 @@ def chat_text(messages, temperature=0.3, model=None, timeout=600):
         timeout=timeout,
     )
     return resp.choices[0].message.content.strip()
-
 
 # ==================== ds_client 兼容层 ====================
 # 多数文件写死 model="deepseek-chat"，这里拦截并统一到实际配置的模型。
