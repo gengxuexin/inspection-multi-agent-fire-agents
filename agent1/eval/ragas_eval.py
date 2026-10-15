@@ -29,6 +29,9 @@ for p in (_ROOT, _AGENT1_DIR):
 import httpx
 
 # ==================== 默认 QA 样例 ====================
+# 内置兜底样例。**完整评测集在 agent1/eval/qa_samples.jsonl（47 条）**，
+# 带category/difficulty/verified 字段以支持分层统计。
+# 这里的 5 条只是无--samples 参数时的最小可运行集合。
 DEFAULT_SAMPLES = [
     {
         "question": "《消防法》第六十条第一款第七项规定了什么？",
@@ -54,7 +57,7 @@ DEFAULT_SAMPLES = [
 
 
 # ==================== 检索 ====================
-def retrieve_contexts(question: str, top_k: int = 8) -> list[str]:
+def retrieve_contexts(question: str, top_k: int = 5) -> list[str]:
     """调 retrieval_backend.search 拿法条上下文。"""
     try:
         from retrieval_backend import search
@@ -67,13 +70,63 @@ def retrieve_contexts(question: str, top_k: int = 8) -> list[str]:
 
 # ==================== LLM 生成答案 ====================
 def generate_answer(question: str, contexts: list[str]) -> str:
-    """用 DeepSeek 基于检索到的法条回答问题。"""
+    """用 DeepSeek 基于检索到的法条回答问题。
+
+    为什么加"强制标注来源"（P3）
+    ----------------------------
+    上一轮样本 3 的 faithfulness 只有 0.75：答案 904 字，把检索到的
+    4 个片段揉成一段叙述，其中夹了片段里没有的概括性表述。根因是
+    prompt 只说"只输出检索结果中真实出现的内容"，**没有要求可追溯**——
+    模型把多个片段平均融合后，就分不清哪句话来自哪一段了。
+
+    加了三条硬约束：
+      1. 每条结论后必须标[片段N]，把陈述与来源显式绑定
+      2. **禁止跨片段合并改写**，逐片回答
+      3. 片段不足以回答时明确说"检索内容不足"，而不是硬答
+
+    第3 条尤其重要：允许"答不知道"能显著降低幻觉，因为 faithfulness
+    惩罚的是"检索内容里没有的东西"，而不是"答得少"。
+
+    ★ 第3 条的措辞必须给"不足"下可操作的定义（47 条评测打出来的补丁）
+    ------------------------------------------------------------------
+    report_v6：34/47 条弃答，answer_relevancy 被压到 0.579。逐条核对后
+    发现其中 **14 条是 context_recall=1.0 却仍然弃答**，属于过度保守，
+    答案其实就在片段里。模型的原话暴露了错误的判据：
+
+      · [24] 消防技术文书应当使用什么式样？
+        ctx[0] 开头就是"消防行政法律文书式样" -> 模型仍答"检索内容不足"
+      · [30] 消防法关于消防设施维护保养的要求是什么？
+        ctx[3] 写着"应当每月进行维护保养，确保其完好有效和处于正常运行状态"
+        -> 模型因"该片段未标明是《消防法》第几条"而弃答
+      · [2] 裁量基准是什么？
+        模型承认片段里有严重/一般/较轻档位，但因"未完整、明确地写出
+        整体性内容"而弃答 —— 它在要**穷尽列举**，而问题只需要定义
+
+    共同的错误：把"**完整**"当成了回答的前提。而 RAGAS 的
+    answer_relevancy 判的是"答案是否切题"，答不出时一律给 0.4，
+    于是 34 条弃答直接把该指标按比例拉低（弃答组均值 0.429，
+    正常组 0.969）。
+
+    所以规则 3 改为：**只判断"有没有相关片段"，不判断"是否完整"**。
+    """
     from config import ds_client
 
     context_text = "\n\n".join(f"--- 片段 {i+1} ---\n{c}" for i, c in enumerate(contexts))
     prompt = (
-        "你是消防法律助手。请基于下面检索到的法律条文回答问题。\n"
-        "只输出检索结果中真实出现的内容，不要编造条款。\n\n"
+        "你是消防法律助手。请基于下面检索到的法律条文回答问题。\n\n"
+        "严格遵守以下规则：\n"
+        "1. 每一条结论后面必须用 [片段N] 标注来源，N 是片段编号。\n"
+        "2. 只能使用某个片段中明确写到的内容。禁止把多个片段的信息合并、"
+        "概括或推断后当成一条结论。\n"
+        "3. **判断标准：只要有任意一个片段与问题相关，就必须基于它作答。**\n"
+        "   提问者要的通常不是穷尽列举，而是规则、定义或主要要求。\n"
+        "   - 片段已给出答案，即使答案不完整、只覆盖部分情形，也要作答，"
+        "并在末尾用一句话说明还有哪些情形检索内容未覆盖。\n"
+        "   - 片段没有标明出处的（例如只写了条文内容、未写条款号），"
+        "照样直接引用，不要因为无法确认条款号就拒答。\n"
+        "   - 只有当**所有片段都与问题无关**时，才回答"
+        "「检索内容不足，无法回答该问题」。\n"
+        "4. 引用条款号、罚款金额等具体数字时必须原文照抄，不得改写。\n\n"
         f"【检索到的法条】\n{context_text}\n\n"
         f"【问题】\n{question}"
     )
@@ -86,7 +139,10 @@ def generate_answer(question: str, contexts: list[str]) -> str:
         )
         return resp.choices[0].message.content.strip()
     except Exception as e:
-        print(f"  ⚠️ LLM 生成失败: {e}")
+        # ★ LLM 失败时返回空串会让这一条的四个指标全部记0，
+        # 在 47 条里就是 1/47 的假低分，而且报告里看不出是"答不出"
+        # 还是"服务挂了"。这里显式标记，让排障时能立刻区分。
+        print(f"  ⚠️ LLM 生成失败（该条将计 0 分，请检查服务是否可用）：{e}")
         return ""
 
 
@@ -125,8 +181,9 @@ def main():
     parser = argparse.ArgumentParser(description="RAGAS 评估")
     parser.add_argument("--samples", default=None,
                         help="QA 样例 JSONL（默认内置 5 条）")
-    parser.add_argument("--top-k", type=int, default=8,
-                        help="检索 top_k")
+    parser.add_argument("--top-k", type=int, default=5,
+                        help="检索 top_k（默认 5；实测越大噪声越多，"
+                             "context_precision 反而下降。上限由 retrieval_backend 收敛到 10）")
     parser.add_argument("--output", default=None,
                         help="输出 JSON 路径（默认 stdout）")
     args = parser.parse_args()

@@ -1,7 +1,47 @@
-{"question": "《消防法》第六十条第一款第七项规定了什么？", "ground_truth": "其他消防安全违法行为依照《中华人民共和国消防法》第六十条第一款第七项的规定处罚"}
-{"question": "公众聚集场所投入使用营业前消防安全检查实行什么制度？", "ground_truth": "实行告知承诺管理，申请人可自主选择采用告知承诺方式办理"}
-{"question": "消防行政处罚的裁量基准是什么？", "ground_truth": "根据违法行为的事实、性质、情节及社会危害程度依法确定处罚种类和幅度"}
-{"question": "浙江省消防行政处罚裁量规定对轻微违法行为如何处理？", "ground_truth": "对轻微违法行为不予处罚，实行包容审慎监管"}
-{"question": "高层民用建筑消防安全管理规定对电动自行车有什么要求？", "ground_truth": "禁止在高层民用建筑的公共门厅、疏散走道、楼梯间、安全出口停放电动自行车或充电"}
-{"question": "消防技术服务机构从业条件是什么？", "ground_truth": "从事消防安全监测等服务的消防技术服务机构应当具备从业条件"}
-{"question": "建设工程消防设计审查验收由哪个部门负责？", "ground_truth": "由住房和城乡建设主管部门负责消防设计审查和消防验收"}
+{"question": "《消防法》第六十条第一款第七项规定了什么？", "ground_truth": "其他消防安全违法行为依照《中华人民共和国消防法》第六十条第一款第七项的规定处罚", "category": "直查法条", "difficulty": "easy", "verified": true}
+{"question": "公众聚集场所投入使用营业前消防安全检查实行什么制度？", "ground_truth": "实行告知承诺管理，申请人可自主选择采用告知承诺方式办理", "category": "直查法条", "difficulty": "easy", "verified": true}
+{"question": "消防行政处罚的裁量基准是什么？", "ground_truth": "根据违法行为的事实、性质、情节及社会危害程度依法确定处罚种类和幅度", "category": "直查法条", "difficulty": "easy", "verified": true}
+{"question": "浙江省消防行政处罚裁量规定对轻微违法行为如何处理？", "ground_truth": "对轻微违法行为不予处罚，实行包容审慎监管", "category": "直查法条", "difficulty": "easy", "verified": true}
+{"question": "高层民用建筑消防安全管理规定对电动自行车有什么要求？", "ground_truth": "禁止在高层民用建筑的公共门厅、疏散走道、楼梯间、安全出口停放电动自行车或充电", "category": "跨文档综合", "difficulty": "hard", "verified": true}
+{"question": "消防技术服务机构从业条件是什么？", "ground_truth": "从事消防安全监测等服务的消防技术服务机构应当具备从业条件", "category": "直查法条", "difficulty": "easy", "verified": true}
+{"question": "建设工程消防设计审查验收由哪个部门负责？", "ground_truth": "由住房和城乡建设主管部门负责消防设计审查和消防验收", "category": "直查法条", "difficulty": "easy", "verified": true}
+{"question": "《注册消防工程师管理规定》第一条的立法目的是什么？", "ground_truth": "为了加强对注册消防工程师的管理，规范注册消防工程师的执业行为，保障消防安全技术服务与管理质量，根据《中华人民共和国消防法》，制定本规定", "category": "直查法条", "difficulty": "easy", "verified": true}
+{"question": "《注册消防工程师管理规定》适用于哪些人员的注册和执业？", "ground_truth": "取得注册消防工程师资格证书人员的注册、执业和继续教育及其监督管理，适用本规定", "category": "直查法条", "difficulty": "medium", "verified": true}
+{"question": "消防安全技术文件需要由注册消防工程师签名吗？", "ground_truth": "消防安全技术文件应当由注册消防工程师签名、加盖执业印章", "category": "直查法条", "difficulty": "easy", "verified": true}
+{"question": "注册消防工程师管理办法的制定依据是哪部法律？", "ground_truth": "根据《中华人民共和国消防法》，制定本规定", "category": "陷阱题", "difficulty": "medium", "verified": true}
+{"question": "浙江省消防行政处罚裁量规定适用于哪些违法行为？", "ground_truth": "适用于消防救援机构实施的行政处罚裁量，涵盖消防技术服务机构、注册消防工程师、公众聚集场所等领域的违法行为", "category": "跨文档综合", "difficulty": "hard", "verified": false}
+{"question": "消防安全技术服务机构可以从事哪些业务？", "ground_truth": "从事消防安全监测、检测、评估、鉴定、咨询等消防安全技术服务", "category": "跨文档综合", "difficulty": "hard", "verified": false}
+{"question": "消防技术服务机构出具虚假消防技术文件有什么法律责任？", "ground_truth": "消防技术服务机构出具虚假消防技术文件的，由应急管理部门责令改正并处罚款，情节严重的吊销资质", "category": "跨文档综合", "difficulty": "hard", "verified": false}
+{"question": "注册消防工程师的注册证书是由哪个机关颁发？", "ground_truth": "注册消防工程师的注册证书由应急管理部消防救援局统一印制和颁发", "category": "直查法条", "difficulty": "medium", "verified": false}
+{"question": "如何申请注册消防工程师注册？", "ground_truth": "取得注册消防工程师资格证书的人员，填写注册申请表，由消防技术服务机构出具聘用证明和劳动关系证明，向所在地消防救援机构申请注册", "category": "跨文档综合", "difficulty": "hard", "verified": false}
+{"question": "注册消防工程师继续教育的要求是什么？", "ground_truth": "注册消防工程师应当接受继续教育，提高执业水平，继续教育情况纳入注册管理", "category": "跨文档综合", "difficulty": "hard", "verified": false}
+{"question": "消防技术服务机构从业条件的具体要求有哪些？", "ground_truth": "机构应当具备与所从事业务相适应的注册消防工程师，配备必要的消防技术器材和设备，并有固定的办公场所", "category": "跨文档综合", "difficulty": "hard", "verified": false}
+{"question": "消防救援机构对消防技术服务机构有哪些监督检查内容？", "ground_truth": "对机构从业条件、执业活动、消防技术服务质量等内容实施监督检查，发现不符合规定的依法处理", "category": "跨文档综合", "difficulty": "hard", "verified": false}
+{"question": "公众聚集场所的消防安全检查由谁负责实施？", "ground_truth": "由县级以上地方人民政府应急管理部门组织消防救援机构实施", "category": "跨文档综合", "difficulty": "hard", "verified": false}
+{"question": "浙江省消防执法全过程记录制度要求记录哪些内容？", "ground_truth": "对消防执法全过程进行记录，涵盖检查、责令改正、处罚等各个环节", "category": "跨文档综合", "difficulty": "hard", "verified": false}
+{"question": "浙江省消防执法公示公开规定要求公示哪些执法信息？", "ground_truth": "应当公示执法主体、执法程序、执法结果和消防监督信息，主动接受社会监督", "category": "直查法条", "difficulty": "medium", "verified": false}
+{"question": "消防救援机构实施监督检查时应当出示什么证件？", "ground_truth": "消防救援机构实施监督检查时应当出示执法证件表明身份，并制作现场检查记录", "category": "直查法条", "difficulty": "medium", "verified": false}
+{"question": "消防救援机构办理行政案件程序规定对办案时限有什么要求？", "ground_truth": "消防救援机构办理行政案件应当遵守办理期限的规定，在规定期限内办结", "category": "直查法条", "difficulty": "medium", "verified": false}
+{"question": "消防技术文书应当使用什么式样？", "ground_truth": "办理行政案件应当使用《消防行政法律文书式样》规定的文书格式", "category": "直查法条", "difficulty": "medium", "verified": false}
+{"question": "大型商业综合体消防安全管理规则对消防安全责任人的要求是什么？", "ground_truth": "大型商业综合体应当明确消防安全责任人，负责组织制定和实施消防安全管理制度", "category": "直查法条", "difficulty": "medium", "verified": false}
+{"question": "消防安全重点单位应当多久组织一次消防演练？", "ground_truth": "至少每半年组织一次灭火和应急疏散演练，演练方案、记录应当存档备查", "category": "跨文档综合", "difficulty": "hard", "verified": false}
+{"question": "消防安全重点单位有哪些消防安全义务？", "ground_truth": "应当履行消防安全职责，建立健全消防安全管理制度，加强消防设施维护保养，开展消防宣传教育培训和疏散演练", "category": "跨文档综合", "difficulty": "hard", "verified": false}
+{"question": "浙江省消防行政处罚裁量规定对占用消防车通道的行为如何处罚？", "ground_truth": "对占用、堵塞、封闭消防车通道的，根据情节轻重处以不同幅度的罚款", "category": "跨文档综合", "difficulty": "hard", "verified": false}
+{"question": "浙江省消防行政处罚裁量规定的裁量阶次是如何划分的？", "ground_truth": "根据违法行为的事实、性质、情节及社会危害程度，划分为严重、一般、较轻等裁量阶次，分别对应不同处罚幅度", "category": "直查法条", "difficulty": "medium", "verified": false}
+{"question": "消防法关于消防设施维护保养的要求是什么？", "ground_truth": "消防设施、器材应当定期检验、维修、保养，确保完好有效", "category": "跨文档综合", "difficulty": "medium", "verified": false}
+{"question": "电动自行车充电场所的建设需要符合哪些技术要求？", "ground_truth": "电动自行车充停、充换场所建设应符合技术导则要求，具备防火分隔、充电设施配备等条件", "category": "跨文档综合", "difficulty": "hard", "verified": false}
+{"question": "关于电动自行车进楼入户的问题，浙江省消防救援总队是怎么规定的？", "ground_truth": "严禁电动自行车进楼入户，规范停放充电，禁止在公共门厅、疏散走道、安全出口停放或充电", "category": "陷阱题", "difficulty": "hard", "verified": false}
+{"question": "建设工程消防验收操作技术导则对消防验收的抽样数量有什么规定？", "ground_truth": "查验时的抽样数量比例按规范要求执行，如全数检查或按比例抽查", "category": "直查法条", "difficulty": "medium", "verified": false}
+{"question": "建筑内部装修工程消防设计审查对防火分隔有什么要求？", "ground_truth": "装修工程不得改变建筑物的防火分类和耐火等级，其防火分隔、防烟分区等应符合国家标准", "category": "跨文档综合", "difficulty": "hard", "verified": false}
+{"question": "建筑防火间距不足的如何判定为占用防火间距？", "ground_truth": "占用防火间距导致建筑之间实际防火间距不足规范要求的比例，且无法当场改正的", "category": "直查法条", "difficulty": "hard", "verified": false}
+{"question": "行政处罚法规定行政处罚的种类有哪些？", "ground_truth": "包括警告、通报批评；罚款、没收违法所得、没收非法财物；暂扣许可证件、降低资质等级、吊销许可证件；限制开展生产经营活动、责令停产停业、责令关闭、限制从业；行政拘留", "category": "直查法条", "difficulty": "medium", "verified": false}
+{"question": "什么情况下可以对个人处以行政拘留处罚？", "ground_truth": "违反治安管理行为情节较重的，处五日以上十日以下拘留，可以并处五百元以下罚款", "category": "跨文档综合", "difficulty": "hard", "verified": false}
+{"question": "消防产品的认证目录包含哪些类别？", "ground_truth": "强制性产品认证目录涵盖消防产品、电气电子产品等类别，目录外产品实行自我声明", "category": "陷阱题", "difficulty": "medium", "verified": false}
+{"question": "消防产品目录（2022年修订本）涵盖哪些大类？", "ground_truth": "包括电线电缆、开关插座、灭火器、应急灯具等类别，具体以目录描述与界定表为准", "category": "陷阱题", "difficulty": "medium", "verified": false}
+{"question": "消防产品目录中的电线电缆类产品包括哪些？", "ground_truth": "电线电缆（3 种），不包括阻燃电线电缆、耐火电线电缆", "category": "陷阱题", "difficulty": "medium", "verified": true}
+{"question": "消防产品目录里的产品需要哪些认证程序？", "ground_truth": "目录内产品实施强制性产品认证，目录外产品可采取自我声明程序A或程序B", "category": "陷阱题", "difficulty": "medium", "verified": false}
+{"question": "《消防法》规定的消防安全违法行为包括哪些情形？", "ground_truth": "包括消防设施、器材或者消防安全标志的配置、设置不符合国家标准、行业标准，未保持完好有效；损坏、挪用或者擅自拆除、停用消防设施、器材；占用、堵塞、封闭疏散通道、安全出口、消防车通道；其他消防安全违法行为", "category": "跨文档综合", "difficulty": "hard", "verified": false}
+{"question": "违反消防法规定有哪些法律责任？", "ground_truth": "违反本法规定，尚不构成犯罪的，依法给予行政处罚；构成犯罪的，依法追究刑事责任", "category": "跨文档综合", "difficulty": "medium", "verified": false}
+{"question": "消防安全违法行为轻微且及时改正的如何处理？", "ground_truth": "对轻微违法行为不予处罚，实行包容审慎监管，首次轻微违法且立即改正的可不予行政处罚", "category": "直查法条", "difficulty": "medium", "verified": false}
+{"question": "消防救援机构如何确定行政处罚的裁量阶次？", "ground_truth": "综合考量违法的事实、性质、情节、社会危害程度以及当事人改正情况等因素，在裁量阶次范围内确定处罚幅度", "category": "跨文档综合", "difficulty": "hard", "verified": false}
+{"question": "什么情况下应当从重处罚？", "ground_truth": "当事人有主观过错、拒不改正、造成严重后果等情形的，应当在裁量阶次内从重处罚", "category": "跨文档综合", "difficulty": "hard", "verified": false}
