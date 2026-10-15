@@ -108,7 +108,14 @@ checkpoints.sqlite
 
 # 训练/评估产物
 agent1/eval/report.json
+agent1/eval/after_api_emb.json
 *.joblib
+
+# ---- 评测过程中的中间报告 ----
+# v6/v7 是结论依据，已入库留档；v3~v5 是调优中间产物，不入库
+report_v3.json
+report_v4.json
+report_v5.json
 
 # 临时文件
 tmp/
