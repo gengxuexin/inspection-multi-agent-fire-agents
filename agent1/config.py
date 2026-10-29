@@ -36,6 +36,69 @@ DEEPSEEK_API_KEY = _s.deepseek_api_key
 DEEPSEEK_BASE_URL = _s.deepseek_base_url
 DEEPSEEK_MODEL = _s.deepseek_model        # 或 deepseek-reasoner
 
+# ★ provider_mode：cloud（默认，纯云端）| local（全本地 Ollama）| hybrid（云端优先，失败降本地）
+#
+# 落地背景：消防执法/政务场景通常是内网或涉密环境，云端 API 根本不可达。
+# 当前版本（2026-10）默认仍走 cloud，因为开发调试方便；
+# 但代码必须保证切到 local 时不需要改任何业务逻辑。
+PROVIDER_MODE = (_s.provider_mode or "cloud").lower()
+
+
+# ==================== 本地 Ollama LLM 客户端 ====================
+_local_llm = None
+_local_llm_checked = False
+
+
+def get_local_llm():
+    """获取本地 Ollama 的 OpenAI 兼容客户端；不可用时返回 None。
+
+    ★ 与历史兼容逻辑的区别
+    ----------------------
+    下方 `set_deepseek` 有一段兼容代码：历史调用如果传了 ollama 相关入参，
+    会被**强制改道回 DeepSeek**。那是为了防止老代码误连本地。
+    但它同时意味着「本地模型路径被完全堵死」——
+    provider_mode=local 时根本走不到 Ollama。
+
+    所以这里单独提供一个真正的本地 client，
+    由 `common/llm_guard.py` 根据 provider_mode 决定用哪个。
+
+    不抛异常，只返回 None —— 调用方（llm_guard）会据此决定是否降级。
+    """
+    global _local_llm, _local_llm_checked
+    if _local_llm_checked:
+        return _local_llm
+    _local_llm_checked = True
+
+    try:
+        client = OpenAI(
+            api_key="ollama",              # Ollama 不校验 key，占位即可
+            base_url=OLLAMA_BASE,
+            timeout=float(getattr(_s, "llm_request_timeout", 30.0)),
+        )
+        # 探活：列模型，确认服务在、模型在
+        models = client.models.list()
+        available = {getattr(m, "id", "") for m in (models.data or [])}
+        want = _s.ollama_model or "qwen2.5:7b"
+        if want not in available:
+            logger.warning(
+                "[agent1] 本地 Ollama 已连通但缺少模型 %s（现有: %s）",
+                want, ", ".join(sorted(available)) or "无")
+            _local_llm = None
+            return None
+        logger.info("[agent1] 本地 Ollama 就绪：%s @ %s", want, OLLAMA_BASE)
+        _local_llm = client
+    except Exception as e:  # noqa: BLE001 — 探活失败就是「不可用」，不该崩
+        logger.info("[agent1] 本地 Ollama 不可用（%s），将走云端或降级路径", e)
+        _local_llm = None
+    return _local_llm
+
+
+def reset_local_llm_probe() -> None:
+    """测试用：重置本地探活缓存。"""
+    global _local_llm, _local_llm_checked
+    _local_llm = None
+    _local_llm_checked = False
+
 
 # ==================== DeepSeek 官方 API 配置（LLM 用）====================
 _ds_client = None

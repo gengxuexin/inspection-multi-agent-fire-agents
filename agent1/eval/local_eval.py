@@ -16,8 +16,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import pathlib
 import re
 import sys
 import time
@@ -351,7 +353,503 @@ def judge_context_recall(ground_truth: str, contexts: list[str]) -> float:
     return round(sum(1 for v in covered if v) / len(facts), 3)
 
 
+# ==================== 基线对比 ====================
+#
+# ★ 这套机制的全部理由（2026-10-15 实测踩坑）：
+#   v6/v7/v8 三轮跑完，总分"有涨有跌"，很自然会解读成调优时灵时不灵。
+#   但逐条比对 contexts 发现三轮 47 条上下文**逐字完全相同**——
+#   索引没动过，v8 是次空跑。而即便变量隔离了，LLM-as-judge 本身也会抖：
+#   同输入两次跑，context_recall 能差 0.021。
+#
+#   v8 还有另一种误读：cp 从 0.520 掉到 0.325，
+#   看起来像检索退化，实际是 **top_k 从 5 改成 8**，
+#   precision 的分母变了。所以可比性必须查 top_k。
+#
+#   要锁住的重点是**别再把空跑/噪声误读成优化效果**。
+
+KEYS = ("faithfulness", "answer_relevancy",
+        "context_precision", "context_recall")
+
+# 抖动幅度未知时的保守阈值。
+#
+# ★ 为什么必须是 0.10 而不是实测的 0.021：
+#   实测抖动是在特定数据集 + 特定 judge 上测的，换数据集就不一定成立。
+#   更重要的是：**单次 A/B 差值只是抖动幅度的下界，不是幅度本身。**
+#   曾拿 v7/v8 的差值（recall 0.021）当阈值设成 0.02，
+#   结果 v7→v8 的 recall 差值恰好 0.021，卡在边界上，
+#   `abs(0.021) > 0.02` 判真，测试直接失败。
+#
+#   差值分布有方差，两次恰好接近不代表常态如此。
+#   tests 里有一条专门锁定这个决策：若有人调回 0.02，
+#   必须先解释为什么单次观测可以当阈值用。
+_NOISE_FLOOR_UNKNOWN = 0.10
+
+
+def _contexts_fingerprint(details: list) -> str:
+    """上下文指纹：只哈希 question + contexts。
+
+    ★ 绝不能包含答案与分数。
+      含了的话分数一变指纹就变，空跑检测立刻失效——
+      而空跑检测是这三项机制里最有用的一项。
+
+    实测：v7/v8/v9 三份报告指纹完全相同（cb941a0116de7cef），
+    正是空跑的铁证。
+    """
+    h = hashlib.sha256()
+    for d in details:
+        h.update((d.get("question") or "").encode("utf-8"))
+        for c in (d.get("contexts") or []):
+            h.update(c.encode("utf-8"))
+        h.update(b"\x00")
+    return h.hexdigest()[:16]
+
+
+def _fingerprint_of(rep: dict, details: list) -> str:
+    """优先用报告里存的指纹，没有才算一遍。
+
+    ★ 不能只信报告字段：万一是旧版本报告（没这字段）或被手改过，
+      那就该自己算。存指纹的意义是省一次全量哈希，不是免于校验。
+    """
+    fp = rep.get("_contexts_fingerprint")
+    if isinstance(fp, str) and fp:
+        return fp
+    return _contexts_fingerprint(details)
+
+
+def _read_scores(rep: dict) -> dict:
+    """取四指标均值。
+
+    ★ 报告的真实结构：
+        scores.<metric>       均值在这里
+        scores._per_sample[]  逐条分数
+        details[]             只有问答与检索结果，不含指标
+
+    读错位置不会崩，只会让所有差值变成 0，
+    于是"未超出噪声底"看起来像正常结论——比直接崩溃危险得多。
+    """
+    sc = rep.get("scores") or {}
+    return {k: (float(sc[k]) if isinstance(sc.get(k), (int, float)) else None)
+            for k in KEYS}
+
+
+def _noise_from_baseline(base: dict) -> dict:
+    """取基线里的实测噪声底。
+
+    :return: {"floors": {指标: 值}, "measured": bool}
+    ★ 用 dict 而不是 tuple —— tuple 的解包顺序写错不会报错，
+      只会让「measured」拿到空 dict（falsy），
+      机制静默降级成"几乎什么都不报"，与设计目的正好相反。
+    """
+    for src in (base.get("_noise_floor"),
+                (base.get("scores") or {}).get("_noise_floor")):
+        if isinstance(src, dict):
+            vals = {k: float(src[k]) for k in KEYS
+                    if isinstance(src.get(k), (int, float))}
+            if vals:
+                return {"floors": vals, "measured": True}
+    return {"floors": {}, "measured": False}
+
+
+def compare_with_baseline(cur_report: dict, baseline_path: str) -> dict:
+    """与基线报告对比，返回结构化 verdict（供打印与断言）。"""
+    out = {
+        "error": None,
+        "baseline_file": baseline_path,
+        "checks": {},
+        "deltas": {},
+        "verdict": {},
+    }
+
+    # ★ 局部 import 而非依赖模块级：
+    #   tests/test_eval_baseline.py 用 exec 摘出这段执行，
+    #   只注入 json/os/hashlib —— 模块级的 pathlib 不会被带进来。
+    import pathlib as _pathlib
+    bp = _pathlib.Path(baseline_path)
+    if not bp.is_file():
+        out["error"] = f"基线文件不存在：{baseline_path}"
+        return out
+    try:
+        base = json.loads(bp.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as e:
+        out["error"] = f"基线读取失败：{e}"
+        return out
+
+    cur_details = cur_report.get("details") or []
+    base_details = base.get("details") or []
+    if not cur_details or not base_details:
+        out["error"] = "报告缺少 details，无法对比"
+        return out
+
+    # ---------- Q1 可比性 ----------
+    cur_n = cur_report.get("num_samples") or len(cur_details)
+    base_n = base.get("num_samples") or len(base_details)
+    cur_k = cur_report.get("top_k")
+    base_k = base.get("top_k")
+    k_differs = (cur_k is not None and base_k is not None and cur_k != base_k)
+
+    note = ""
+    if cur_n != base_n:
+        note = (f"样本数不同（基线 {base_n} vs 本轮 {cur_n}），"
+                "分数不可比")
+    elif k_differs:
+        note = (f"top_k 不同（基线 {base_k} vs 本轮 {cur_k}），"
+                "precision 分母变了，分数不可比"
+                "（v8 的 cp 0.520→0.325 就是纯 top_k 5→8 造成的）")
+
+    out["checks"]["comparable"] = {
+        "passed": (cur_n == base_n) and not k_differs,
+        "baseline_num_samples": base_n,
+        "current_num_samples": cur_n,
+        "baseline_top_k": base_k,
+        "current_top_k": cur_k,
+        "note": note,
+    }
+    if note:
+        return out          # 不可比时不给 verdict——比什么都不报更危险
+
+    # ---------- 差值 ----------
+    cur_sc = _read_scores(cur_report)
+    base_sc = _read_scores(base)
+    deltas = {}
+    for k in KEYS:
+        a, b = cur_sc.get(k), base_sc.get(k)
+        if a is None or b is None:
+            continue
+        deltas[k] = a - b
+    out["deltas"] = deltas
+
+    # ---------- Q2 空跑检测 ----------
+    fp_cur = _fingerprint_of(cur_report, cur_details)
+    fp_base = _fingerprint_of(base, base_details)
+    same_fp = (fp_cur == fp_base)
+    score_changed = any(abs(v) > 1e-9 for v in deltas.values())
+
+    out["checks"]["variable_isolation"] = {
+        "passed": not same_fp,
+        "contexts_identical": same_fp,
+        "current_fingerprint": fp_cur,
+        "baseline_fingerprint": fp_base,
+    }
+
+    # 空跑判定见下方（放在噪声判定之后，但要区分两件事，见那处注释）
+
+    # ---------- Q3 噪声判定 ----------
+    _nz = _noise_from_baseline(base)
+    floors = _nz["floors"]
+    measured = _nz["measured"]
+    if measured:
+        floor_map = {k: floors.get(k, _NOISE_FLOOR_UNKNOWN) for k in KEYS}
+        source = "基线实测"
+        nz_note = "使用基线报告里的实测噪声底"
+        passed = True
+    else:
+        floor_map = {k: _NOISE_FLOOR_UNKNOWN for k in KEYS}
+        source = f"经验保守值 {_NOISE_FLOOR_UNKNOWN}"
+        nz_note = ("基线未实测噪声底，用经验保守值。"
+                   "建议在基线上跑两次同输入评测，实测抖动后再对比，"
+                   "否则只能得到保守结论")
+        passed = False
+
+    out["checks"]["noise"] = {
+        "passed": passed,
+        "measured": measured,
+        "source": source,
+        "noise_floor": floor_map,
+        "note": nz_note,
+    }
+
+    # ---------- 逐指标 verdict ----------
+    sig_count = 0
+    for k in KEYS:
+        if k not in deltas:
+            continue
+        d = deltas[k]
+        sig = abs(d) > floor_map[k]
+        if sig:
+            sig_count += 1
+        out["verdict"][k] = {
+            "delta": d,
+            "exceeds_noise": sig,
+            "verdict": "真实变化" if sig else "在噪声内，不可归因",
+        }
+
+    # ---------- Q2 空跑 ----------
+    # ★ 语义澄清（这里我一度改错，值得记下来）：
+    #   空跑的判据是「指纹一致 **且** 分数有任何变化」，
+    #   **不是**「指纹一致且变化超出噪声底」。
+    #
+    #   为什么不用噪声底当条件：指纹一致已经意味着检索层零变化，
+    #   此时分数的任何变化都不可能来自策略改进 —— 只能是 LLM 抖动。
+    #   阈值是给"检索层确实变了"的情况做二级过滤用的；
+    #   拿它来判空跑，v7/v8 那种 rec +0.021 就会被放过，
+    #   而那正是最初被骗的那一轮。
+    #
+    #   而且指纹一致 + prec 0.221→0.222 也该报空跑：
+    #   它说明"什么都没改却动了分数"，这本身就是需要知道的事实。
+    if same_fp:
+        if score_changed:
+            out["checks"]["null_run"] = {
+                "detected": True,
+                "passed": False,
+                "note": ("上下文指纹完全一致（" + fp_cur + "），"
+                         "检索层零变化，但分数变了 → "
+                         "差异 100% 来自 LLM 判分随机性，"
+                         "**不是策略改进**。本轮数据不能证明任何优化有效。"),
+            }
+        else:
+            out["checks"]["null_run"] = {
+                "detected": False,
+                "passed": True,
+                "note": "上下文与分数均未变，结果可复现",
+            }
+
+    return out
+
+
+def _as_dict(v) -> dict:
+    """把任意值安全地变成 dict。
+
+    ★ 打印函数的输入来自外部（测试、调用方、上一版实现），
+      字段类型不受控。崩了等于整轮评测白跑——
+      分数已经算完，只是没打出来。
+      所以这里做类型校验，而不是用 `or {}` 兜底
+      （后者遇到 bool 会短路返回 bool，随后 .get 就崩）。
+    """
+    return v if isinstance(v, dict) else {}
+
+
+def print_baseline_report(out: dict) -> None:
+    """把 verdict 打成人类可读的表格。
+
+    ★ 必须能扛各种残缺输入 —— 它崩了等于整轮评测白跑，
+      所以全程用 .get() 链而不是下标访问。
+    """
+    print("\n" + "=" * 66)
+    print("基线对比")
+    print("=" * 66)
+    print(f"  基线文件：{out.get('baseline_file', '(未提供)')}")
+
+    if out.get("error"):
+        print(f"  [FAIL] {out['error']}")
+        return
+
+    checks = _as_dict(out.get("checks"))
+    cmp_ = _as_dict(checks.get("comparable"))
+    print(f"  样本数 基线={cmp_.get('baseline_num_samples')} "
+          f"本轮={cmp_.get('current_num_samples')}   "
+          f"top_k 基线={cmp_.get('baseline_top_k')} "
+          f"本轮={cmp_.get('current_top_k')}")
+
+    if not cmp_.get("passed"):
+        print(f"  [不可比] {cmp_.get('note')}")
+        return
+
+    vi = _as_dict(checks.get("variable_isolation"))
+    print(f"\n  指纹  本轮={vi.get('current_fingerprint')}  "
+          f"基线={vi.get('baseline_fingerprint')}")
+
+    nr = _as_dict(checks.get("null_run"))
+    noise = _as_dict(checks.get("noise"))
+    verdict = _as_dict(out.get("verdict"))
+
+    if verdict:
+        print(f"\n  {'指标':22s} {'差值':>9s} {'噪声底':>8s}")
+        print("  " + "-" * 44)
+        for k in KEYS:
+            v = _as_dict(verdict.get(k))
+            if not v:
+                continue
+            floor_map = _as_dict(noise.get("noise_floor"))
+            f = floor_map.get(k, _NOISE_FLOOR_UNKNOWN)
+            mark = "*" if v.get("exceeds_noise") else " "
+            print(f"  {k:22s} {v.get('delta', 0.0):+9.4f} "
+                  f"{f:8.3f}{mark}")
+
+    total = len(verdict)
+    sig = sum(1 for v in verdict.values()
+              if _as_dict(v).get("exceeds_noise"))
+    print()
+    if nr.get("detected"):
+        print("  [空跑] " + (nr.get("note") or ""))
+        # ★ 空跑之后**继续**打印噪声统计，不要 return。
+        #   否则看到空跑就以为没有别的信息了，
+        #   而「哪几项本可以超噪声」恰恰是下一步该看的。
+        print()
+        if sig:
+            names = [k for k, v in verdict.items()
+                     if _as_dict(v).get("exceeds_noise")]
+            print(f"  注：{sig}/{total} 项超出噪声底（{', '.join(names)}），"
+                  f"但在上下文零变化的前提下，这些差异仍不可归因")
+        else:
+            print(f"  注：{sig}/{total} 项超出噪声底，"
+                  f"全部在噪声内 —— 与'什么都没改'一致")
+
+    print(f"  噪声底来源：{noise.get('source', '(未知)')}")
+    if not noise.get("measured"):
+        print(f"  ⚠ {noise.get('note', '')}")
+
+    if sig:
+        names = [k for k, v in verdict.items() if v.get("exceeds_noise")]
+        print(f"  [可作结论] {sig}/{total} 项超出噪声底：{', '.join(names)}")
+        rest = [k for k, v in verdict.items() if not v.get("exceeds_noise")]
+        if rest:
+            print(f"  [不可作结论] 未超出：{', '.join(rest)}")
+    else:
+        print(f"  [不可作结论] {sig}/{total} 项超出噪声底，"
+              "全部在噪声内，不要写成'提升了'")
+
+
 # ==================== 主流程 ====================
+# ---------------------------------------------------------------- 噪声底
+# 实测 LLM 判分抖动约 0.021（v7/v8 空跑轮的 recall 差值）。
+# 取 0.05 ≈ 实测 2.4 倍余量。
+#
+# ★ 为什么不直接用实测值：
+#   单次 A/B 差值只是抖动幅度的**下界**，不是幅度本身。
+#   阈值取 0.021 时，恰好等于 0.021 的差值会被判成"超出噪声"，
+#   而它其实没超 —— 曾因此让测试失败过一次。
+_NOISE_FLOOR = 0.05
+
+_METRIC_KEYS = ("faithfulness", "answer_relevancy",
+                "context_precision", "context_recall")
+
+
+def contexts_fingerprint(details: list) -> str:
+    """上下文指纹：只看检索结果，不看答案和分数。
+
+    ★ 指纹**绝不能包含答案或分数**。
+      那样分数一变指纹就变，空跑检测立刻失效 ——
+      而空跑检测恰恰是这套机制里最有用的一项。
+    """
+    h = hashlib.sha256()
+    for d in details:
+        h.update((d.get("question") or "").encode("utf-8"))
+        for c in (d.get("contexts") or []):
+            h.update(c.encode("utf-8"))
+        h.update(b"\x00")
+    return h.hexdigest()[:16]
+
+
+def _pick_scores(report: dict) -> dict:
+    """从报告里取四个指标的均值。
+
+    ★ 报告的真实结构（第一版读错过这里）：
+        scores.faithfulness / answer_relevancy /
+                context_precision / context_recall   <- 均值在这里
+        scores._per_sample[]                       <- 逐条分数
+        details[]                                   <- 只有问答与检索结果
+
+    读错位置不会报错，只会让所有差值变成 0，
+    于是"未超出噪声底"看起来像正常结论 —— 这比直接崩溃危险得多。
+    """
+    sc = report.get("scores") or {}
+    out = {}
+    for k in _METRIC_KEYS:
+        v = sc.get(k)
+        out[k] = float(v) if isinstance(v, (int, float)) else None
+    return out
+
+
+def _avg_metric(details: list, key: str) -> float:
+    """兜底：若 scores 缺失，从 _per_sample 求均值。"""
+    vals = [d.get(key) for d in details
+            if isinstance(d.get(key), (int, float))]
+    return sum(vals) / len(vals) if vals else 0.0
+
+
+def compare_with_baseline(details: list, baseline_path: str,
+                          cur_scores: dict | None = None,
+                          noise_floor: float = _NOISE_FLOOR) -> int:
+    """与基线报告对比。返回 0=可作结论，1=不可作结论。"""
+    bp = pathlib.Path(baseline_path)
+    if not bp.is_file():
+        print(f"\n[FAIL] 基线文件不存在：{baseline_path}")
+        return 1
+    try:
+        base = json.loads(bp.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as e:
+        print(f"\n[FAIL] 基线文件读取失败：{e}")
+        return 1
+
+    base_details = base.get("details") or []
+    if not base_details:
+        print("\n[FAIL] 基线报告里没有 details，无法对比")
+        return 1
+
+    print("\n" + "=" * 66)
+    print("基线对比")
+    print("=" * 66)
+    print(f"  基线: {baseline_path}")
+
+    fp_new = contexts_fingerprint(details)
+    fp_old = contexts_fingerprint(base_details)
+    same_fp = (fp_new == fp_old)
+
+    print(f"\n  上下文指纹  本轮={fp_new}  基线={fp_old}")
+    if same_fp:
+        print("    -> 检索层完全未变（空跑）")
+    else:
+        print("    -> 检索层已变化")
+
+    print(f"\n  {'指标':22s} {'基线':>8s} {'本轮':>8s} {'差值':>9s}")
+    print("  " + "-" * 52)
+    # ★ 从 scores 读，不是从 details 读 —— 见 _pick_scores 的注释
+    base_scores = _pick_scores(base)
+    new_scores = (cur_scores if cur_scores is not None
+                  else _pick_scores({"scores": {}}))
+
+    deltas = {}
+    for m in _METRIC_KEYS:
+        a = base_scores.get(m)
+        b = new_scores.get(m)
+        if a is None or b is None:
+            print(f"  {m:22s} {'(基线缺失)' if a is None else '(本轮缺失)'}")
+            deltas[m] = None
+            continue
+        d = b - a
+        deltas[m] = d
+        mark = "*" if abs(d) > noise_floor else " "
+        print(f"  {m:22s} {a:8.4f} {b:8.4f} {d:+9.4f}{mark}")
+
+    usable = {m: v for m, v in deltas.items() if v is not None}
+    if not usable:
+        print("\n  [FAIL] 两份报告都取不到指标，无法对比")
+        print("         请确认报告是 local_eval.py 生成的（含 scores 段）")
+        return 1
+
+    over = [m for m, d in usable.items() if abs(d) > noise_floor]
+    under = [m for m, d in usable.items() if abs(d) <= noise_floor]
+
+    print()
+    if same_fp:
+        print(f"  [空跑] 检索层零变化，但 {len(over)}/{len(_METRIC_KEYS)} "
+              f"项超出噪声底")
+        if over:
+            print("     这些差异 100% 来自 LLM 判分随机性，不是策略改进")
+        print("     结论：本轮数据不能证明任何优化有效")
+        return 1
+
+    print(f"  检索层已变化 -> 差异可归因到检索/生成策略（不是空跑）\n")
+    if over:
+        print(f"  [可作结论] 超出噪声底（+-{noise_floor}）：")
+        for m in over:
+            print(f"       {m:22s} {deltas[m]:+.4f}")
+    if under:
+        print(f"  [不可作结论] 未超出噪声底：")
+        for m in under:
+            print(f"       {m:22s} {deltas[m]:+.4f}")
+        print("     要扩大样本量或重复多轮才能判断，不要写成'提升了'")
+
+    blank = [d for d in details if not (d.get("answer") or "").strip()]
+    if blank:
+        pct = len(blank) / max(len(details), 1) * 100
+        print(f"\n  [故障] {len(blank)}/{len(details)} 条（{pct:.0f}%）未生成答案")
+        if pct > 5:
+            print("     占比过高，本轮全部指标不可与其他轮对比")
+            return 1
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description="轻量 RAG 评估（不依赖 ragas）")
     parser.add_argument("--samples", default=None, help="QA 样例 JSONL（默认内置样例）")
@@ -363,6 +861,12 @@ def main():
     parser.add_argument("--difficulty", default=None,
                         help="只跑指定难度（easy/medium/hard）")
     parser.add_argument("--limit", type=int, default=0, help="只跑前 N 条（调试用）")
+    parser.add_argument(
+        "--baseline", default=None,
+        help="与基线报告对比（自动做空跑检测与噪声判定）")
+    parser.add_argument(
+        "--noise-floor", type=float, default=_NOISE_FLOOR,
+        help=f"噪声底（默认 {_NOISE_FLOOR}，实测抖动约 0.021）")
     args = parser.parse_args()
 
     samples = DEFAULT_SAMPLES
@@ -469,6 +973,52 @@ def main():
             }
         scores["_breakdown"] = breakdown
 
+        # ==================== 应答样本口径（★ 总分不变，只增加视角）========
+        # 弃答样本的 context_precision 必然是 0（没有答案，
+        # 「上下文是否相关」无从判定），但它们照样计入总分。
+        # 实测 47 条里弃答 14 条 = 29.8% —— 总分 0.226 与应答口径 0.309
+        # 的差距，主要来自这里。
+        #
+        # 分层看才能定位该优化哪个环节：
+        #   召回到但掺噪声（recall 高、precision 低）→ rerank / top_k
+        #   没召回到（recall 低）                  → 分块 / 查询改写
+        _ans_rows = [r for r in per_sample if not r.get("_abstained")]
+        _ab_rows = [r for r in per_sample if r.get("_abstained")]
+        if _ans_rows:
+            scores["_answered_only"] = {
+                "n": len(_ans_rows),
+                **{
+                    k: round(sum(r[k] for r in _ans_rows) / len(_ans_rows), 3)
+                    for k in keys
+                },
+            }
+        if _ab_rows:
+            scores["_abstained_only"] = {
+                "n": len(_ab_rows),
+                **{
+                    k: round(sum(r[k] for r in _ab_rows) / len(_ab_rows), 3)
+                    for k in keys
+                },
+            }
+
+        # 按类别 × 是否应答 的交叉分层
+        _cross: dict = {}
+        for d, r in zip(eval_data, per_sample):
+            bucket = "answered" if not r.get("_abstained") else "abstained"
+            g = d.get("category", "未分类")
+            _cross.setdefault(g, {}).setdefault(bucket, []).append(r)
+        scores["_by_category_answered"] = {
+            g: {
+                bucket: {
+                    "n": len(rows),
+                    **{k: round(sum(x[k] for x in rows) / len(rows), 3)
+                       for k in keys},
+                }
+                for bucket, rows in buckets.items()
+            }
+            for g, buckets in sorted(_cross.items())
+        }
+
         # ★ 弃答诊断（report_v6 打出来的补丁，v7 加固，v8 改用 LLM judge）
         #
         # answer_relevancy 长期停在 0.58，根因不是检索而是**弃答**：
@@ -518,6 +1068,21 @@ def main():
         for o in _over[:12]:
             print(f"    ! rec={o['rec']:.2f} {o['q'][:56]}")
 
+        print(f"\n{'='*60}\n📐 口径对比（总分不变，只增加视角）")
+        _ao = scores.get("_answered_only")
+        _ao_all = scores.get("_abstained_only")
+        if _ao:
+            print(f"  应答样本 n={_ao['n']:<3} prec={_ao['context_precision']:<6} "
+                  f"rec={_ao['context_recall']}")
+        if _ao_all:
+            print(f"  弃答样本 n={_ao_all['n']:<3} prec={_ao_all['context_precision']:<6} "
+                  f"rec={_ao_all['context_recall']}")
+        if _ao:
+            print(f"  → 弃答样本的 precision 必然为 0（没答案就无从判断相关性），"
+                  f"却占 {_ao_all['n']/len(per_sample)*100:.0f}% 计入总分")
+            print(f"  → 优化前先看分层：recall 低=没召回到（改分块/查询改写）；"
+                  f"recall 高 precision 低=掺了噪声（改 rerank/top_k）")
+
         print(f"\n{'='*60}\n📊 分层统计")
         for dim, groups in breakdown.items():
             print(f"\n  按 {dim}:")
@@ -541,6 +1106,10 @@ def main():
         "scores": scores,
         "details": eval_data,
     }
+    # 上下文指纹：只哈希 question + contexts，绝不含答案与分数。
+    # 指纹一致 = 检索层完全没变 = 差异只来自生成与打分（空跑）。
+    report["_contexts_fingerprint"] = contexts_fingerprint(eval_data)
+    report["_noise_floor"] = args.noise_floor
     output = json.dumps(report, ensure_ascii=False, indent=2)
     if args.output:
         with open(args.output, "w", encoding="utf-8") as f:
@@ -565,6 +1134,19 @@ def main():
             print(f"    ...另有 {len(_blank)-5} 条")
         print("   ⚠️ 这些条目计 0 分，会拉低总分。"
               "**本轮结果不可与其他轮直接对比**，请先修好 LLM 再重跑。")
+
+    # ---- 基线对比 / 空跑检测 ----
+    if getattr(args, "baseline", None):
+        rc = compare_with_baseline(
+            eval_data, args.baseline,
+            cur_scores=report.get("scores"),
+            noise_floor=args.noise_floor)
+        if rc != 0:
+            sys.exit(rc)
+    else:
+        print("\n💡 想确认这轮改动到底有没有效果，加 --baseline 指向上一轮报告：")
+        print("   --baseline ../report_v10.json")
+        print("   不加的话，看到的分数变化可能只是 LLM 判分抖动。")
 
 
 if __name__ == "__main__":

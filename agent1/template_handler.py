@@ -113,16 +113,21 @@ def _llm_map(placeholders: list, case_context: dict) -> dict:
     case_info = json.dumps(case_context, ensure_ascii=False, indent=2)
     pl_json = json.dumps(placeholders, ensure_ascii=False)
 
-    resp = ds_client.chat.completions.create(
-        model="deepseek-chat",
-        messages=[{"role": "user", "content": MAP_PROMPT.format(
+    # ★ guarded_chat_json：熔断 + 退避重试 + 降级。
+    #   映射失败降级成空 dict —— 模板里没填上的字段由人工补，
+    #   好过整个文书生成直接报错。
+    from common.llm_guard import guarded_chat_json
+    raw = guarded_chat_json(
+        [{"role": "user", "content": MAP_PROMPT.format(
             case_info=case_info,
             placeholders=pl_json,
         )}],
         temperature=0.1,
-        response_format={"type": "json_object"},
+        purpose="模板占位符映射",
+        fallback=lambda *a, **k: {},
     )
-    raw = json.loads(resp.choices[0].message.content)
+    if not isinstance(raw, dict):
+        raw = {}
     return {k: v for k, v in raw.items() if v is not None and v != ""}
 
 

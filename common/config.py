@@ -79,6 +79,35 @@ class Settings(BaseSettings):
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-chat"
 
+    # ---- Provider 模式（★ 落地关键项）----
+    # cloud  ：默认，走云端 DeepSeek / DashScope（开发调试方便，当前状态）
+    # local  ：全部走本地 Ollama（内网/涉密环境必需）
+    # hybrid ：云端优先，云端不可达时自动降级到本地
+    #
+    # 为什么需要这个开关：消防执法场景多为内网或涉密环境，
+    # 云端 API 根本不可达 —— 不是「慢一点」，是「完全连不上」。
+    # 开发阶段用云端，上线前切 local，业务代码零改动。
+    provider_mode: str = "cloud"
+
+    # ---- LLM 调用保护（熔断/重试/降级）----
+    # 单次请求超时。★ 原来 config.py 里是 600s（client 300s）——
+    # 执法场景等 10 分钟不可接受，收紧到 30s。
+    llm_request_timeout: float = 30.0
+    llm_max_retries: int = 2                 # 重试次数（不含首次）
+    llm_retry_base_delay: float = 0.5        # 指数退避基数
+    llm_retry_max_delay: float = 8.0         # 退避上限
+    llm_breaker_threshold: int = 5           # 连续失败多少次后熔断
+    llm_breaker_reset_timeout: float = 30.0  # 熔断后多久试探恢复
+
+    # ---- 本地模型供给（供 model_provisioner 使用）----
+    # 自动下载开关：off=从不自动下载 | on=允许 | prompt=询问用户
+    local_model_autodownload: str = "prompt"
+    # 检索精度阈值：低于此值提示用户换更准但更慢的模型
+    retrieval_precision_threshold: float = 0.6
+    # 推荐的高精度模型（慢但准），用于降级提示
+    llm_high_precision_model: str = "deepseek-reasoner"
+    llm_fast_model: str = "deepseek-chat"
+
     # ---- Agent1：Embedding（索引依赖，建库后不可变）----
     # 本地 Ollama 向量化 3841 块需 3 小时以上（3.04s/chunk），已改为云端 API。
     # 选型：阿里云 text-embedding-v4

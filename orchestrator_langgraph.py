@@ -19,6 +19,7 @@ LangGraph 状态图编排器（生产版）
 """
 from __future__ import annotations
 
+import uuid
 import json
 import logging
 import os
@@ -542,7 +543,15 @@ async def orchestrate(
     if not _LANGGRAPH_AVAILABLE:
         raise RuntimeError("langgraph 未安装")
 
-    conv_id = conversation_id or f"task_{int(time.time())}"
+    # ★ thread_id 必须是**每次调用唯一**的。
+    #   原来用 f"task_{int(time.time())}" —— 秒级精度，
+    #   同一秒发起的两个并发任务会拿到相同 thread_id，
+    #   LangGraph checkpointer 按 thread_id 存取状态 →
+    #   第二个任务从第一个的 checkpoint 恢复 → **状态串台**
+    #   （执法场景下两个案件的案情要素可能互相污染）。
+    #   改用 uuid4：时间前缀仅供人工排查，唯一性由 uuid 保证。
+    conv_id = conversation_id or (
+        f"task_{int(time.time())}_{uuid.uuid4().hex[:8]}")
     initial_state: State = {
         "query": user_query,
         "conversation_id": conv_id,

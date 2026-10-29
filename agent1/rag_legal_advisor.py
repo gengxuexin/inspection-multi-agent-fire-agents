@@ -168,14 +168,17 @@ def extract_legal_fields_from_case(
     legal_context = format_legal_context(snippets)
 
     # 2. LLM 归纳
+    # ★ 走 guarded_chat_json：熔断 + 退避重试 + 降级
+    #   云端 LLM 不可达时（内网/限流/密钥失效），不至于让整个请求 500。
     fields_json = json.dumps(
         {f["key"]: f.get("label", f["key"]) for f in legal_fields},
         ensure_ascii=False, indent=2,
     )
 
-    resp = ds_client.chat.completions.create(
-        model="deepseek-chat",
-        messages=[{
+    from common.llm_guard import guarded_chat_json
+
+    result = guarded_chat_json(
+        [{
             "role": "user",
             "content": LEGAL_FIELD_PROMPT.format(
                 case_text=case_text,
@@ -184,9 +187,10 @@ def extract_legal_fields_from_case(
             ),
         }],
         temperature=0.1,
-        response_format={"type": "json_object"},
+        purpose="法律字段抽取",
+        fallback=lambda *a, **k: {},
     )
-    return json.loads(resp.choices[0].message.content)
+    return result if isinstance(result, dict) else {}
 
 
 # ==================== 二次校验：条款号反查原文 ====================

@@ -75,18 +75,21 @@ def _default_log_path() -> str:
 
 
 def _write_jsonl(path: str, record: dict) -> None:
-    """best-effort 追加一行 JSONL；目录自动创建；失败吞掉异常仅提示一次。"""
-    global _jsonl_write_warned
-    try:
-        parent = os.path.dirname(os.path.abspath(path))
-        if parent:
-            os.makedirs(parent, exist_ok=True)
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(record, ensure_ascii=False) + "\n")
-    except Exception as e:  # noqa: BLE001
-        if not _jsonl_write_warned:
-            _jsonl_write_warned = True
-            logger.error(f"[audit] 警告：审计日志写入失败（仅提示一次）：{e}")
+    """追加一行 JSONL；目录自动创建。
+
+    ★ 2026-10 加固
+    --------------
+    原实现是 best-effort（写失败静默吞掉，只提示一次）。
+    在消防执法场景下，审计日志是**执法留痕的载体**，
+    静默丢失意味着「事后才发现那天没有记录」—— 不可接受。
+
+    现在委托给 common/audit_reliability.write_audit_record：
+      - 写失败 → 死信队列 + Prometheus 指标 + 明确日志
+      - 同步落盘（flush + fsync），进程被 kill 不丢最后几行
+      - AUDIT_STRICT=1 时上抛（默认不上抛，避免审计故障拖垮执法业务）
+    """
+    from common.audit_reliability import write_audit_record
+    write_audit_record(path, record)
 
 
 def _user_sub(user: Any) -> str:

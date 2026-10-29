@@ -152,15 +152,20 @@ def generate_form_docx(case_context, template_path, output_path, field_schema):
 
     # 1. LLM 抽字段
     logger.info(f"    [1/4] LLM 抽取 {len(field_schema)} 个字段...")
-    resp = ds_client.chat.completions.create(
-        model="deepseek-chat",
-        messages=[{"role": "user", "content": _build_extract_prompt(
+    # ★ guarded_chat_json：熔断 + 退避重试 + 降级。
+    #   抽取失败降级成空 dict，后续 _apply_defaults 会用默认值补齐，
+    #   不会让整个文书生成流程崩掉。
+    from common.llm_guard import guarded_chat_json
+    fields = guarded_chat_json(
+        [{"role": "user", "content": _build_extract_prompt(
             field_schema, json.dumps(case_context, ensure_ascii=False)
         )}],
         temperature=0.1,
-        response_format={"type": "json_object"},
+        purpose="文书字段抽取",
+        fallback=lambda *a, **k: {},
     )
-    fields = json.loads(resp.choices[0].message.content)
+    if not isinstance(fields, dict):
+        fields = {}
 
     # 2. 默认值 + 自动补全
     fields = _apply_defaults(fields, field_schema, case_context)
@@ -187,17 +192,18 @@ def generate_form_docx(case_context, template_path, output_path, field_schema):
     if "处罚决定" in field_schema and not fields.get("处罚决定"):
         logger.info(f"    [3/4] 生成处罚决定建议...")
         try:
-            suggest = ds_client.chat.completions.create(
-                model="deepseek-chat",
-                messages=[{"role": "user", "content":
+            from common.llm_guard import guarded_chat
+            fields["处罚决定"] = guarded_chat(
+                [{"role": "user", "content":
                     f"根据以下法律依据，为一个消防违法案件给出建议的处罚决定（一句话）：\n"
                     f"法律依据：{fields.get('法律依据', '')}\n"
                     f"违法事实：{case_desc}\n"
                     f"只返回一句话，如：'罚款壹万元整' 或 '责令停产停业并处罚款伍仟元整'。"
                 }],
                 temperature=0.3,
+                purpose="处罚决定建议",
+                fallback=lambda *a, **k: "",
             )
-            fields["处罚决定"] = suggest.choices[0].message.content.strip()
         except Exception as e:
             logger.error(f"        ⚠️ 处罚建议生成失败：{e}")
     else:

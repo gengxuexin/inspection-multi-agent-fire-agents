@@ -219,17 +219,116 @@ def _precheck_embedding(embeddings, expect_dim: int) -> None:
 
 
 # ==================== 状态文件 ====================
-def _load_state() -> set:
-    if os.path.exists(_STATE_FILE):
-        with open(_STATE_FILE, "r", encoding="utf-8") as f:
-            return set(json.load(f))
-    return set()
+# ★ 2026-10 从「fingerprint 集合」升级为「结构化映射」
+#
+# 旧格式（list）只能回答「这个文件处理过吗」，
+# 定位不到「它对应索引里哪些 chunk」——
+# 于是增量更新变成只增不删：法规改版后旧块残留在索引里，
+# 检索会同时返回新旧两版条文，模型可能引用已作废的条款。
+# 在消防执法场景这直接导致文书出错。
+#
+# 新格式（含 chunk_ids）才能实现「先删旧块、再插新块」。
+
+from index_state import (  # noqa: E402
+    load_state as _istate_load,
+    save_state as _istate_save,
+    record_file as _istate_record,
+    chunks_of as _istate_chunks,
+    summarize as _istate_summarize,
+    is_legacy as _istate_is_legacy,
+    stale_fingerprints_for as _istate_stale,
+    diff_files as _istate_diff,
+)
 
 
-def _save_state(processed: set):
-    os.makedirs(_INDEX_DIR, exist_ok=True)
-    with open(_STATE_FILE, "w", encoding="utf-8") as f:
-        json.dump(sorted(processed), f, ensure_ascii=False, indent=2)
+def _load_state() -> dict:
+    """读状态文件。旧 list 格式会被自动识别（标记 legacy）。"""
+    return _istate_load(_STATE_FILE)
+
+
+def _save_state(state: dict):
+    _istate_save(_STATE_FILE, state)
+
+
+# ==================== 旧块删除 ====================
+def _collect_faiss_doc_ids(processed: dict, added_docs, batch_docs) -> None:
+    """把 FAISS 生成的 doc_id（UUID）回填到状态记录里。
+
+    added_docs 是 add_documents 的返回值 —— **list[str]（UUID 字符串）**，
+    与 batch_docs 一一对应 —— 靠位置配对。
+
+    为什么必须记 UUID：FAISS.delete(ids=...) 只认 docstore 的 UUID，
+    传业务 chunk_id 会报 "Some specified ids do not exist"，
+    于是改版时旧块永远删不掉。
+
+    processed 显式传参 —— 它是 main() 的局部变量，
+    模块级函数拿不到（第一次写这版时踩了这个坑）。
+    """
+    if not added_docs or not batch_docs:
+        return
+    # 先建 chunk_id → entry 的反查表，避免 O(n²)
+    chunk_owner: dict[str, list] = {}
+    for _fp, entry in processed.items():
+        for cid in entry.get("chunk_ids") or []:
+            chunk_owner.setdefault(cid, []).append(entry)
+
+    # ★ added_docs 是 **id 字符串列表**（UUID），不是 Document 对象。
+    #   实测：vectorstore.add_documents(docs) -> list[str]
+    #   第一版误写成 getattr(doc, "id", None)，永远拿到 None，
+    #   导致 FAISS 后端永远删不掉旧块（单元测试测不到这种接线错误）。
+    for doc_id, original in zip(added_docs, batch_docs):
+        if not isinstance(doc_id, str) or not doc_id:
+            continue
+        meta = getattr(original, "metadata", {}) or {}
+        chunk_id = meta.get("chunk_id")
+        if not chunk_id:
+            continue
+        for entry in chunk_owner.get(chunk_id, []):
+            entry.setdefault("doc_ids", []).append(doc_id)
+
+
+
+def _delete_stale_chunks(stale: dict, state: dict, backend: str,
+                         mv_client, collection, vectorstore) -> None:
+    """删除改版/删除文件留下的旧块。
+
+    ★ 删除失败必须中断，不能继续
+    --------------------------
+    删不掉旧块 → 新旧两版条文并存 → 检索可能命中已作废的条款 →
+    模型把它写进处罚决定书。**这是会出执法事故的静默失败**，
+    所以这里抛异常中断，而不是打条日志继续跑。
+
+    两套 ID：
+      - Milvus 按业务 chunk_id（metadata.chunk_id）做 expr 删除
+      - FAISS 按 docstore 的 UUID 删除（FAISS.delete 只认 UUID）
+    """
+    from index_prune import (
+        PruneError, collect_ids_to_delete,
+        delete_from_faiss, delete_from_milvus,
+    )
+
+    ids = collect_ids_to_delete(state, stale)
+    chunk_ids = ids["chunk_ids"]
+    doc_ids = ids["doc_ids"]
+
+    try:
+        if backend == "milvus":
+            n = delete_from_milvus(mv_client, collection, chunk_ids)
+        else:
+            if not doc_ids:
+                raise PruneError(
+                    "FAISS 需要 doc_ids（UUID）才能删除，但状态文件里没有。"
+                    "说明该索引是用旧版脚本建的，请执行一次 --rebuild。")
+            n = delete_from_faiss(vectorstore, doc_ids)
+    except PruneError:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise PruneError(f"删除旧块时发生未预期错误：{e}") from e
+
+    print(f"   ✅ 已删除 {n} 个旧块")
+    # 从状态里移除这些旧记录（改版的会在插入新块后重新写入）
+    for fp in stale:
+        state.pop(fp, None)
 
 
 def _file_fingerprint(path: str) -> str:
@@ -364,6 +463,8 @@ def main():
                         help="向量库后端（默认 faiss）")
     parser.add_argument("--mode", choices=["single", "multi", "full"], default=MODE,
                         help="知识库模式（默认 full）")
+    parser.add_argument("--prune", action="store_true",
+                    help="只清理孤儿块（索引里有、状态里没有），不重建")
     parser.add_argument("--rebuild", "--force", dest="rebuild",
                         action="store_true",
                         help="强制全量重建（分块策略变更后必须加，否则会跳过已处理文件）")
@@ -453,7 +554,8 @@ def main():
     # 2. 断点续传
     if args.rebuild:
         print("🔄 --rebuild：忽略断点记录，全量重建\n")
-        processed = set()
+        processed = {}
+        state = {}
         todo = list(all_files)
         if backend == "faiss":
             for fn in ("index.faiss", "index.pkl"):
@@ -462,8 +564,42 @@ def main():
                     os.remove(p)
                     print(f"   已删除旧索引文件：{fn}")
     else:
-        processed = _load_state()
-        todo = [f for f in all_files if _file_fingerprint(f) not in processed]
+        state = _load_state()
+        if state and _istate_is_legacy(state):
+            print("⚠️ 检测到旧格式状态文件（只有指纹、没有块 ID）。\n"
+                  "   旧格式无法定位已入库的块，因此**无法删除改版残留**。\n"
+                  "   建议执行一次 --rebuild 重建，之后增量更新才能正确清理旧块。\n")
+
+        # ★ 按「路径」而非指纹做差异计算
+        #   指纹含 mtime，文件一改指纹就变 —— 按指纹比对的话，
+        #   改版的文件会变成「removed + added」，看不出是同一文件的改版，
+        #   也就无法定位并删除它的旧块。
+        current_map = {}
+        fp_to_path = {}
+        for f in all_files:
+            fp = _file_fingerprint(f)
+            current_map[fp] = os.path.relpath(f, _KB_DIR).replace(os.sep, "/")
+            fp_to_path[fp] = f
+
+        added_fps, changed_fps, removed_fps = _istate_diff(state, current_map)
+
+        # 需要删除的旧块：改版的 + 被删的
+        stale = _istate_stale(state, current_map)
+        if stale:
+            total_stale = sum(len(v) for v in stale.values())
+            print(f"🧹 检测到 {len(stale)} 个文件有旧块残留"
+                  f"（共 {total_stale} 块）待清理")
+            for fp, ids in stale.items():
+                src_path = (state.get(fp) or {}).get("path") or "?"
+                print(f"   - {src_path}: {len(ids)} 块")
+            _delete_stale_chunks(stale, state, backend, mv_client,
+                                 collection, vectorstore)
+        else:
+            print("✅ 无旧块残留")
+
+        # 待处理 = 新增 + 改版（改版的要先删旧块再插新块）
+        todo = [fp_to_path[fp] for fp in added_fps + changed_fps if fp in fp_to_path]
+        processed = state
 
     index_complete = True
     if backend == "faiss":
@@ -472,7 +608,8 @@ def main():
         index_complete = os.path.isfile(index_file) and os.path.isfile(pkl_file)
         if not index_complete and processed:
             print("⚠️ 检测到处理记录存在，但 FAISS 索引文件不完整，将重新构建\n")
-            processed = set()
+            processed = {}
+            state = {}
             todo = list(all_files)
 
     print(f"✅ 已处理：{len(processed)} 个")
@@ -545,13 +682,37 @@ def main():
             docs = _load_file(path)
             if not docs:
                 print(f"  ⏭️ [{i}/{len(todo)}] 跳过（无文本）: {os.path.basename(path)}")
-                processed.add(_file_fingerprint(path))
+                processed[_file_fingerprint(path)] = {
+                    "path": os.path.relpath(path, _KB_DIR).replace(os.sep, "/"),
+                    "chunk_ids": [], "doc_ids": [],
+                    "indexed_at": __import__("datetime").datetime.now(
+                        __import__("datetime").timezone.utc
+                    ).isoformat(timespec="seconds"),
+                    "chunks": 0, "legacy": False,
+                }
                 continue
 
             chunks = splitter.split_documents(docs)
             batch_docs.extend(chunks)
             time.sleep(0.05)
-            processed.add(_file_fingerprint(path))
+
+            # ★ 记录本文件的块 ID（业务 chunk_id + 向量库 doc_id）
+            #   没有这两个 ID，改版时就定位不到旧块，增量更新会退化成
+            #   「只增不删」——法规改版后旧条文仍可被检索并写进处罚文书。
+            _fp = _file_fingerprint(path)
+            _chunk_ids = [str(c.metadata.get("chunk_id", "")) for c in chunks
+                          if getattr(c, "metadata", None)]
+            _chunk_ids = [c for c in _chunk_ids if c]
+            processed[_fp] = {
+                "path": os.path.relpath(path, _KB_DIR).replace(os.sep, "/"),
+                "chunk_ids": _chunk_ids,
+                "doc_ids": [],
+                "indexed_at": __import__("datetime").datetime.now(
+                    __import__("datetime").timezone.utc
+                ).isoformat(timespec="seconds"),
+                "chunks": len(chunks),
+                "legacy": False,
+            }
 
             print(f"  ✅ [{i}/{len(todo)}] {os.path.basename(path)}  ({len(chunks)} 块)")
 
@@ -571,7 +732,11 @@ def main():
                             batch_docs, embedding=embeddings
                         )
                     else:
-                        vectorstore.add_documents(batch_docs)
+                        # ★ 收集 FAISS 生成的 doc_id（UUID）
+                        #   add_documents 返回带 id 的文档列表 —— 这是唯一
+                        #   能拿到 UUID 的时机，事后无法从 chunk_id 反推。
+                        added = vectorstore.add_documents(batch_docs)
+                        _collect_faiss_doc_ids(processed, added, batch_docs)
                     os.makedirs(_INDEX_DIR, exist_ok=True)
                     vectorstore.save_local(_INDEX_DIR)
 

@@ -279,11 +279,17 @@ def analyze_case_file(file_bytes: bytes, file_name: str) -> dict:
         return {"_error": f"无法从 {file_name} 提取文本（可能是扫描件或空文件）"}
     text = text[:8000]
 
-    resp = ds_client.chat.completions.create(
-        model="deepseek-chat",
-        messages=[{"role": "user", "content": CASE_PROMPT.format(text=text)}],
+    # ★ guarded_chat_json：熔断 + 退避重试 + 降级。
+    #   抽取失败降级成空 dict，并带上 _error 标记让上游能识别。
+    from common.llm_guard import guarded_chat_json
+    raw = guarded_chat_json(
+        [{"role": "user", "content": CASE_PROMPT.format(text=text)}],
         temperature=0.1,
-        response_format={"type": "json_object"},
+        purpose="案情要素抽取",
+        fallback=lambda *a, **k: {},
     )
-    raw = json.loads(resp.choices[0].message.content)
+    if not isinstance(raw, dict):
+        raw = {}
+    if not raw:
+        return {"_error": f"LLM 不可用或抽取失败，未能提取案情（{file_name}）"}
     return {k: v for k, v in raw.items() if v}

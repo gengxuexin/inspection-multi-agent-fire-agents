@@ -213,16 +213,18 @@ PENALTY_PROMPT = """你是消防行政执法人员。请根据以下案情、违
 
 def generate_penalty_advice(case_text: str, legal_basis: str) -> str:
     """根据案情 + 法律依据生成处罚决定建议"""
-    from config import ds_client
+    from common.llm_guard import guarded_chat
     try:
-        resp = ds_client.chat.completions.create(
-            model="deepseek-chat",
-            messages=[{"role": "user", "content": PENALTY_PROMPT.format(
+        # ★ guarded_chat：熔断 + 退避重试 + 降级。
+        #   降级返回空串 —— 处罚建议缺失好过整个文书生成失败。
+        return guarded_chat(
+            [{"role": "user", "content": PENALTY_PROMPT.format(
                 case_text=case_text, legal_basis=legal_basis,
             )}],
             temperature=0.3,
+            purpose="处罚建议生成",
+            fallback=lambda *a, **k: "",
         )
-        return resp.choices[0].message.content.strip()
     except Exception as e:
         logger.error(f"[field_resolver] 处罚建议生成失败：{e}")
         return ""
