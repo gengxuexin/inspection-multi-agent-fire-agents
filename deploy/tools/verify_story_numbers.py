@@ -119,9 +119,17 @@ if not ok:
     fail += 1
 
 # ---- 6. 噪声底（应与代码里的常量一致）----
+# ★ 这里要读**生效的判定阈值** `_NOISE_FLOOR`，不是兜底值 `_NOISE_FLOOR_UNKNOWN`。
+#   两者含义不同：
+#     _NOISE_FLOOR         = 0.05   实际判定阈值（A/B 差值超过它算「超出噪声」）
+#     _NOISE_FLOOR_UNKNOWN = 0.10   拿不到基线报告时的保守兜底
+#   早期版本误读了兜底值，导致文档写「噪声底 0.10」而系统实际用 0.05 ——
+#   拿兜底值当生效值，比数字不一致更糟。
 loc_src = (ROOT / "agent1" / "eval" / "local_eval.py").read_text(encoding="utf-8")
-m = re.search(r"_NOISE_FLOOR_UNKNOWN\s*=\s*([\d.]+)", loc_src)
+m = re.search(r"^_NOISE_FLOOR\s*=\s*([\d.]+)", loc_src, re.M)
 floor = m.group(1) if m else "?"
+mu = re.search(r"^_NOISE_FLOOR_UNKNOWN\s*=\s*([\d.]+)", loc_src, re.M)
+floor_unknown = mu.group(1) if mu else "?"
 ok = floor in block
 print(f"  [{'OK  ' if ok else 'FAIL'}] 噪声底 {floor}"
       f"（代码 local_eval.py）")
