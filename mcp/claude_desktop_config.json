@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "fire-change-detector": {
+      "command": "wsl",
+      "args": [
+        "-d", "Ubuntu-24.04",
+        "-u", "geng",
+        "--",
+        "/home/geng/.venv/bin/python",
+        "/home/geng/fire_agent_v2/fire_agents/mcp/change_detector_server.py"
+      ],
+      "env": {
+        "MCP_TRANSPORT": "stdio"
+      }
+    }
+  }
+}

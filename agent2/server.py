@@ -6,7 +6,21 @@ import shutil
 import tempfile
 import traceback
 
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# ★ import 路径要包含项目根，而不只是 agent2 自身目录。
+#
+# 原来只 append 了 `os.path.dirname(__file__)`（即 /app/agent2），
+# 于是`from common.tracing import ...` 这类跨包 import 在容器里会失败：
+#     ModuleNotFoundError: No module named 'common'
+# （common 包在 /app/common，而 WORKDIR 是 /app/agent2）
+#
+# 本地开发时看不出来，因为 CWD 是项目根，Python 会自动把 CWD 放进 sys.path。
+# 只有按容器的形态跑才暴露 —— 所以 preflight 里加了
+# check_container_imports.py专门查这一项。
+_SVC_DIR = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.dirname(_SVC_DIR)
+for _p in (_PROJECT_ROOT, _SVC_DIR):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 from fastapi import FastAPI, UploadFile, File
 from pydantic import BaseModel
@@ -41,6 +55,31 @@ class QAReq(BaseModel):
 @app.get("/")
 def root():
     return {"service": "Agent2 语音服务", "status": "ok"}
+
+
+@app.get("/health")
+def health():
+    """存活探针：只回答「进程还在不在」。
+
+    刻意不加载 Whisper 模型、不探 ffmpeg、不连 TTS 服务。
+    agent2 的模型有几百 MB，真在探针里加载会让每次健康检查都变成一次
+    重量级操作；而且模型加载失败属于「就绪失败」，该由 /ready 报，不是重启能解决的。
+    """
+    return {"service": "Agent2 语音服务", "status": "ok"}
+
+
+@app.get("/ready")
+def ready():
+    """就绪探针：检查语音链路真正需要的外部条件。
+
+    这里只做廉价的静态检查（ffmpeg 是否在 PATH），不做模型加载 ——
+    探针必须轻量，否则每次探测都会给系统带来额外负担。
+    """
+    import shutil as _shutil
+    ffmpeg_ok = _shutil.which("ffmpeg") is not None
+    return {"service": "Agent2 语音服务",
+            "status": "ok" if ffmpeg_ok else "degraded",
+            "checks": {"ffmpeg": "ok" if ffmpeg_ok else "missing"}}
 
 
 @app.post("/api/voice/transcribe")

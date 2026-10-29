@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>消防智能执法 · RAG 链路演示</title>
+<style>
+:root{
+  --bg:#0f1115; --panel:#171a21; --panel2:#1e222b; --border:#2a2f3a;
+  --text:#e6e8eb; --dim:#9aa3b0; --dim2:#6b7480;
+  --accent:#4a9eff; --ok:#3fb950; --warn:#d29922; --err:#f85149;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.6}
+.wrap{max-width:1400px;margin:0 auto;padding:24px}
+
+header{border-bottom:1px solid var(--border);padding-bottom:20px;margin-bottom:24px}
+h1{font-size:22px;font-weight:600;letter-spacing:.3px}
+.sub{color:var(--dim);font-size:13px;margin-top:8px}
+.badges{margin-top:12px;display:flex;gap:8px;flex-wrap:wrap}
+.badge{font-size:11px;padding:3px 9px;border-radius:4px;background:var(--panel2);
+  border:1px solid var(--border);color:var(--dim);font-family:var(--mono)}
+
+.layout{display:grid;grid-template-columns:320px 1fr;gap:20px;align-items:start}
+@media(max-width:1000px){.layout{grid-template-columns:1fr}}
+
+.side{position:sticky;top:24px}
+label{display:block;font-size:12px;color:var(--dim);margin-bottom:7px;font-weight:500}
+textarea,input{width:100%;background:var(--panel);border:1px solid var(--border);
+  color:var(--text);border-radius:7px;padding:11px 13px;font-size:14px;
+  font-family:inherit;resize:vertical;outline:none;transition:border-color .15s}
+textarea:focus,input:focus{border-color:var(--accent)}
+textarea{min-height:76px;line-height:1.5}
+
+.row{display:flex;gap:9px;margin-top:12px;flex-wrap:wrap;align-items:center}
+select{background:var(--panel);border:1px solid var(--border);color:var(--text);
+  border-radius:6px;padding:8px 11px;font-size:13px;outline:none}
+
+button{background:var(--accent);color:#fff;border:none;border-radius:7px;
+  padding:10px 20px;font-size:14px;font-weight:600;cursor:pointer;
+  font-family:inherit;transition:opacity .15s}
+button:hover{opacity:.88}
+button:disabled{opacity:.45;cursor:not-allowed}
+button.ghost{background:transparent;border:1px solid var(--border);color:var(--dim);font-weight:400}
+
+.samples{margin-top:22px;border-top:1px solid var(--border);padding-top:16px}
+.samples h3{font-size:12px;color:var(--dim2);margin-bottom:10px;font-weight:600;
+  text-transform:uppercase;letter-spacing:.6px}
+.sample{padding:10px 12px;background:var(--panel);border:1px solid var(--border);
+  border-radius:7px;margin-bottom:8px;cursor:pointer;transition:all .15s}
+.sample:hover{border-color:var(--accent);background:var(--panel2)}
+.sample .q{font-size:13px;margin-bottom:3px}
+.sample .n{font-size:11px;color:var(--dim2)}
+
+.main{min-width:0}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:10px;
+  margin-bottom:16px;overflow:hidden}
+.card-h{padding:13px 17px;border-bottom:1px solid var(--border);
+  display:flex;justify-content:space-between;align-items:center;gap:12px}
+.card-h h2{font-size:14px;font-weight:600}
+.card-h .hint{font-size:12px;color:var(--dim2)}
+.card-b{padding:17px}
+.hint-empty{color:var(--dim2);font-size:13px;padding:44px 20px;text-align:center;line-height:1.9}
+
+.stages{display:flex;flex-direction:column;gap:11px}
+.stage{border:1px solid var(--border);border-radius:8px;overflow:hidden;background:var(--panel2)}
+.stage-h{padding:10px 14px;display:flex;justify-content:space-between;
+  align-items:center;gap:12px;cursor:pointer;user-select:none}
+.stage-h:hover{background:#232833}
+.stage-n{font-size:13px;font-weight:600;display:flex;align-items:center;gap:9px}
+.num{width:20px;height:20px;border-radius:4px;background:var(--accent);
+  color:#fff;font-size:11px;display:grid;place-items:center;font-family:var(--mono)}
+.stage-meta{font-size:11px;color:var(--dim2);font-family:var(--mono);white-space:nowrap}
+.stage-d{padding:0 14px 12px;font-size:12px;color:var(--dim);display:none}
+.stage.open .stage-d{display:block}
+.caret{color:var(--dim2);font-size:11px;transition:transform .15s}
+.stage.open .caret{transform:rotate(90deg)}
+
+table{width:100%;border-collapse:collapse;font-size:12px;margin-top:8px}
+th{text-align:left;padding:8px 10px;background:var(--panel);color:var(--dim);
+  border:1px solid var(--border);font-weight:500;font-size:11px}
+td{padding:9px 10px;border:1px solid var(--border);vertical-align:top;
+  font-family:var(--mono);font-size:11.5px}
+.rank{color:var(--accent);font-weight:600;width:34px}
+.score{color:var(--warn)}
+.preview{color:var(--dim);font-family:inherit;font-size:12px;line-height:1.55;
+  max-height:70px;overflow:hidden}
+
+.answer{background:var(--panel2);border-left:3px solid var(--accent);
+  padding:14px 16px;border-radius:0 7px 7px 0;font-size:14px;line-height:1.75;
+  white-space:pre-wrap;max-height:440px;overflow-y:auto}
+.answer.abstain{border-left-color:var(--warn)}
+
+.verdict{display:inline-flex;align-items:center;gap:7px;padding:5px 11px;
+  border-radius:5px;font-size:12px;font-weight:600;font-family:var(--mono)}
+.v-ok{background:rgba(63,185,80,.13);color:var(--ok);border:1px solid rgba(63,185,80,.3)}
+.v-warn{background:rgba(210,153,34,.13);color:var(--warn);border:1px solid rgba(210,153,34,.3)}
+.v-err{background:rgba(248,81,73,.13);color:var(--err);border:1px solid rgba(248,81,73,.3)}
+.v-unknown{background:rgba(154,163,176,.1);color:var(--dim);
+  border:1px solid rgba(154,163,176,.25)}
+
+.cite{display:flex;gap:11px;align-items:flex-start;padding:10px 13px;
+  background:var(--panel2);border:1px solid var(--border);border-radius:7px;
+  margin-bottom:8px;font-size:12.5px}
+.cite .art{color:var(--accent);font-family:var(--mono);font-weight:600;white-space:nowrap}
+.cite .ex{color:var(--dim2);font-size:11.5px;margin-top:4px;line-height:1.5}
+.tick{color:var(--ok)}
+.fab{color:var(--err);font-weight:600}
+.cite-ok{border-color:rgba(63,185,80,.3);background:rgba(63,185,80,.05)}
+.cite-fuzzy{border-color:rgba(210,153,34,.3);background:rgba(210,153,34,.05)}
+.cite-bad{border-color:rgba(248,81,73,.35);background:rgba(248,81,73,.06)}
+.guard{display:flex;gap:9px;flex-wrap:wrap;margin-top:11px}
+.guard div{flex:1;min-width:180px;background:var(--panel2);border:1px solid var(--border);
+  border-radius:7px;padding:10px 12px;font-size:11.5px;color:var(--dim);line-height:1.55}
+.guard b{display:block;color:var(--text);font-size:12px;margin-bottom:4px}
+.cross{color:var(--dim2)}
+
+.note{background:rgba(74,158,255,.06);border:1px solid rgba(74,158,255,.18);
+  border-radius:7px;padding:12px 15px;font-size:12.5px;color:var(--dim);
+  line-height:1.7;margin-top:13px}
+.note strong{color:var(--text)}
+.note code{font-family:var(--mono);font-size:11.5px;background:var(--panel2);
+  padding:1px 5px;border-radius:3px;color:var(--accent)}
+.spin{display:inline-block;width:13px;height:13px;border:2px solid var(--border);
+  border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite;
+  vertical-align:-2px}
+@keyframes sp{to{transform:rotate(360deg)}}
+.err-box{background:rgba(248,81,73,.08);border:1px solid rgba(248,81,73,.3);
+  border-radius:7px;padding:13px 15px;font-size:13px;color:var(--err);font-family:var(--mono)}
+.talk{font-size:13px;color:var(--dim);line-height:1.75}
+.talk b{color:var(--text)}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>消防智能执法 · RAG 链路演示</h1>
+  <div class="sub">展示检索各阶段真实耗时与命中片段、生成结果、弃答判定与引用溯源 —— 全部为服务端实跑数据</div>
+  <div class="badges">
+    <span class="badge">BM25 + 向量 + RRF</span>
+    <span class="badge">IDF 加权精排</span>
+    <span class="badge">弃答机制</span>
+    <span class="badge">引用可溯源</span>
+    <span class="badge">熔断 + 预算兜底</span>
+  </div>
+</header>
+
+<div class="layout">
+  <div class="side">
+    <label>问题</label>
+    <textarea id="q" placeholder="输入消防法规问题"></textarea>
+    <div class="row">
+      <select id="k">
+        <option value="3">top_k = 3</option>
+        <option value="5" selected>top_k = 5</option>
+        <option value="8">top_k = 8</option>
+      </select>
+      <button id="go">执行检索</button>
+      <button class="ghost" id="reset">清空</button>
+    </div>
+
+    <div class="samples">
+      <h3>示例问题</h3>
+      <div id="sampleList"></div>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="card">
+      <div class="card-h"><h2>检索链路</h2><span class="hint" id="totalHint"></span></div>
+      <div class="card-b" id="stages">
+        <div class="hint-empty">输入问题或点选左侧示例<br>每一步的耗时与命中片段都是服务端实跑的真实数据</div>
+      </div>
+    </div>
+
+    <div class="card" id="answerCard" style="display:none">
+      <div class="card-h"><h2>生成结果与判定</h2><span class="hint" id="abstainHint"></span></div>
+      <div class="card-b">
+        <div class="answer" id="answer"></div>
+        <div class="note" id="talkNote"></div>
+      </div>
+    </div>
+
+    <div class="card" id="citeCard" style="display:none">
+      <div class="card-h"><h2>引用溯源</h2><span class="hint" id="citeHint"></span></div>
+      <div class="card-b" id="cites"></div>
+    </div>
+  </div>
+</div>
+</div>
+
+<script>
+const SAMPLE = [
+  {q:'建筑消防设施包括哪些', n:'可溯源 —— 条款号确实在检索片段里'},
+  {q:'公众聚集场所投入使用需要什么手续', n:'可溯源 —— 手续类条款对应清晰'},
+  {q:'消防设施维护保养要求是什么', n:'混合 —— 一处可溯源、一处编造'},
+  {q:'消防救援机构有哪些职责', n:'6 处引用 5 处编造 —— 实测数据，用来讲兜底'},
+  {q:'消防安全重点单位有哪些消防安全义务？', n:'跨文档综合类 —— A/B 暴露的难点'},
+  {q:'消防技术文书应当使用什么式样？', n:'文书模板类，答案在 output/templates'},
+];
+
+document.getElementById('sampleList').innerHTML = SAMPLE.map((s,i)=>
+  `<div class="sample" data-q="${encodeURIComponent(s.q)}">
+     <div class="q">${s.q}</div><div class="n">${s.n}</div>
+   </div>`).join('');
+
+document.querySelectorAll('.sample').forEach(el=>{
+  el.onclick = ()=>{ document.getElementById('q').value = decodeURIComponent(el.dataset.q); run(); };
+});
+
+const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+function renderStages(stages){
+  const box = document.getElementById('stages');
+  if(!stages || !stages.length){ box.innerHTML = '<div class="hint-empty">无数据</div>'; return; }
+  box.innerHTML = '<div class="stages">' + stages.map((s,i)=>{
+    let meta = [];
+    if(s.ms!=null) meta.push(s.ms+' ms');
+    if(s.count!=null) meta.push(s.count+' 条');
+    if(s.chars!=null) meta.push(s.chars+' 字');
+
+    let body = `<div class="stage-d">`;
+    if(s.detail) body += `<div style="margin-bottom:9px">${esc(s.detail)}</div>`;
+    if(s.input!=null && s.input!==s.output)
+      body += `<div style="font-family:var(--mono);font-size:11.5px;color:var(--dim2);margin-bottom:9px">
+        改写后：${esc(s.output)}</div>`;
+    if(s.error)
+      body += `<div class="err-box" style="margin-bottom:9px">${esc(s.error)}</div>`;
+
+    if(s.fragments && s.fragments.length){
+      body += '<table><thead><tr><th>#</th><th>得分</th><th>片段</th><th>字数</th></tr></thead><tbody>'
+        + s.fragments.map(f=>`<tr>
+            <td class="rank">${f.rank}</td>
+            <td class="score">${f.score}</td>
+            <td><div style="margin-bottom:4px"><b style="color:var(--text)">${esc(f.source)}</b>
+              ${f.law?'<span style="color:var(--dim2)"> 《'+esc(f.law)+'》</span>':''}</div>
+              <div class="preview">${esc(f.preview)}</div>
+              ${f.cited_articles&&f.cited_articles.length?
+                '<div style="margin-top:5px;color:var(--ok);font-size:11px">含 '+esc(f.cited_articles.join('、'))+'</div>':''}
+            </td>
+            <td style="color:var(--dim2)">${f.chars}</td>
+          </tr>`).join('')
+        + '</tbody></table>';
+    }
+    body += '</div>';
+
+    return `<div class="stage">
+      <div class="stage-h">
+        <div class="stage-n"><span class="num">${i+1}</span>${esc(s.name)}
+          <span class="caret">▶</span></div>
+        <div class="stage-meta">${meta.join(' · ')}</div>
+      </div>${body}</div>`;
+  }).join('') + '</div>';
+
+  box.querySelectorAll('.stage-h').forEach((h,i)=>{
+    h.onclick = ()=> h.parentElement.classList.toggle('open');
+  });
+  if(stages.length) box.querySelector('.stage').classList.add('open');
+}
+
+function renderResult(r){
+  document.getElementById('totalHint').textContent =
+    r.total_ms!=null ? ('总耗时 '+r.total_ms+' ms') : '';
+
+  // 答案
+  const ac = document.getElementById('answerCard');
+  ac.style.display='';
+  const ans = document.getElementById('answer');
+  ans.textContent = r.answer || '(空回答)';
+  ans.classList.toggle('abstain', r.abstained===true);
+
+  // 弃答标签
+  const hint = document.getElementById('abstainHint');
+  let cls, txt;
+  if(r.abstained===true){ cls='v-warn'; txt='弃答 · '+r.abstain_marker; }
+  else if(r.abstained===false){ cls='v-ok'; txt='正常作答'; }
+  else { cls='v-unknown'; txt='不确定 · '+(r.abstain_marker||''); }
+  hint.innerHTML = `<span class="verdict ${cls}">${esc(txt)}</span>`;
+
+  // 引用溯源渲染
+  // ★ 这段曾因下面两处 bug 让整页 JS 全挂：
+  //   1) notes 被声明了两次（同名 const 重复声明 = SyntaxError）
+  //   2) cs 未定义（应为 r.citations）
+  //   两个 bug 叠加，整个 <script> 块无法解析，
+  //   页面上表现为「正常加载但点了没反应」—— 而 API 是通的，
+  //   极易误判成后端问题。
+  //   现在 verify_demo.py 里有 node --check 语法门禁，防止复发。
+  const cs = r.citations || [];
+  const fab = cs.filter(c=>c.risk==='fabricated').length;
+  const citeCard = document.getElementById('citeCard');
+  if(cs.length){
+    citeCard.style.display='';
+    const okN = cs.filter(c=>c.risk==='ok').length;
+    const fzN = cs.filter(c=>c.risk==='fuzzy').length;
+    document.getElementById('citeHint').innerHTML =
+      '<b>' + cs.length + '</b> 处引用 · <span class="tick">' + okN + ' 可溯源</span>'
+      + (fzN ? ' · ' + fzN + ' 处表述有差异' : '')
+      + (fab ? ' · <span class="fab">' + fab + ' 处无法溯源</span>' : '');
+    document.getElementById('cites').innerHTML = cs.map(function(c){
+      const cls = c.risk==='ok' ? 'cite-ok'
+                : (c.risk==='fuzzy' ? 'cite-fuzzy' : 'cite-bad');
+      const mark = c.risk==='ok'   ? '<span class="tick">✓ 可溯源</span>'
+                : (c.risk==='fuzzy' ? '⚠ 表述有差异'
+                                    : '<span class="fab">✗ 检索片段中无此条款</span>');
+      return '<div class="cite ' + cls + '">'
+        + '<div class="art">' + esc(c.article) + '</div>'
+        + '<div style="flex:1">'
+        +   '<div>' + esc(c.law||'') + ' ' + mark + '</div>'
+        +   (c.source_excerpt
+               ? '<div class="ex">' + esc(c.source_excerpt) + '</div>' : '')
+        + '</div></div>';
+    }).join('');
+  } else {
+    citeCard.style.display='none';
+  }
+
+  // 讲解
+  const notes = [];
+  if(fab > 0){
+    notes.push('<b>它会编造条款号 —— 这是实测数据，不是假设。</b>'
+      +`本轮 ${cs.length} 处引用里 ${fab}处在检索片段里找不到。`
+      +'消防执法场景下，编造的条款号会直接影响法律适用，所以这个项目配套了三道防线：'
+      +'prompt 显式约束「不编造条款号」；'
+      +'MCP 工具把涉及「法条」的改动自动标为高风险；'
+      +'文书归档前强制人工确认。');
+  } else if(r.abstained===true){
+    notes.push('<b>它知道自己不知道。</b>消防场景下「查不到」比「瞎答」安全得多 —— '
+      +'错误的法条引用可能直接影响执法合法性，所以 prompt 里显式写了'
+      +'「完全无关时才答未检索到」，而不是让模型硬答。');
+  } else if(r.abstained===null){
+    notes.push('<b>判定不确定。</b>这个回答既没有弃答文案，也短得不像正常答案 —— '
+      +'宁可标「不确定」也不硬判，把猜测说成事实比承认不知道更糟。');
+  } else {
+    notes.push('<b>正常作答，且引用可溯源。</b>'
+      +'每处引用都标了它出自哪个检索片段，可以逐条核对。');
+  }
+  if(r.abstained===false || fab>0){
+    notes.push('<b>看耗时。</b>检索通常 1s 上下、生成 1~3s，端到端 3s 左右。'
+      +'首次访问因为要加载 embedding 模型与分词语料，会到 6.5s —— '
+      +'这是冷启动的典型特征，服务启动时已做预热。');
+  }
+  let html = '<b>可讲的点</b><br>' + notes.map(n=>'· '+n).join('<br>');
+  if(fab>0){
+    html += `<div class="guard">
+      <div><b>防线一 · 生成时</b>prompt 显式约束「只输出检索结果中真实出现的内容，不要编造条款号」</div>
+      <div><b>防线二 · 审核时</b>MCP 改动检测把涉及法条的改动自动标为 high 风险</div>
+      <div><b>防线三 · 归档前</b>文书必须人工确认才能移入 official 目录</div>
+    </div>`;
+  }
+  document.getElementById('talkNote').innerHTML = html;
+}
+
+async function run(){
+  const q = document.getElementById('q').value.trim();
+  if(!q) return;
+  const btn = document.getElementById('go');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin"></span>';
+  document.getElementById('stages').innerHTML =
+    '<div class="hint-empty"><span class="spin"></span> 检索中…</div>';
+
+  try{
+    const res = await fetch('/api/demo/ask', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({question:q, top_k: parseInt(document.getElementById('k').value)})
+    });
+    const data = await res.json();
+    if(data.error){
+      document.getElementById('stages').innerHTML =
+        '<div class="err-box">'+esc(data.error)+'</div>';
+      document.getElementById('answerCard').style.display='none';
+      document.getElementById('citeCard').style.display='none';
+    } else {
+      renderStages(data.stages);
+      renderResult(data);
+    }
+  }catch(e){
+    document.getElementById('stages').innerHTML =
+      '<div class="err-box">请求失败：'+esc(e.message)+'</div>';
+  }finally{
+    btn.disabled = false;
+    btn.textContent = '执行检索';
+  }
+}
+
+document.getElementById('go').onclick = run;
+document.getElementById('q').addEventListener('keydown',e=>{
+  if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); run(); }
+});
+document.getElementById('reset').onclick = ()=>{
+  document.getElementById('q').value='';
+  document.getElementById('stages').innerHTML =
+    '<div class="hint-empty">输入问题或点选左侧示例<br>每一步的耗时与命中片段都是服务端实跑的真实数据</div>';
+  document.getElementById('answerCard').style.display='none';
+  document.getElementById('citeCard').style.display='none';
+  document.getElementById('totalHint').textContent='';
+};
+</script>
+</body>
+</html>

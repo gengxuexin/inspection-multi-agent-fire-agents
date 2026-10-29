@@ -8,32 +8,54 @@ __pycache__
 venv
 env
 
-# 向量库（运行时挂载，不打入镜像）
+# ---- 密钥：绝对不能进镜像 ----
+# ★ .env 里是真实的 API Key。即使当前 Dockerfile 没有 COPY . .，
+#   以后任何人加一行宽泛的 COPY 就会把它打进镜像层里 ——
+#   而镜像层即使后续删除也仍然留在历史中，能被 push 到仓库、被别人 pull 出来。
+#   这里显式排除，是给未来的人留的护栏。
+.env
+.env.*
+!.env.example
+
+# ---- 运行时挂载，不打入镜像 ----
 agent1/faiss_full
 agent1/faiss_single
 agent1/faiss_multi
-
-# 知识库原始文件（运行时挂载）
 agent1/knowledge_base
-
-# 模型文件
+agent1/inputs
+agent1/templates
+agent1/output
+agent2/output
+agent3/output
+agent3/input
 agent1/models
 models
 
-# 输出文件
-agent1/output
-agent1/templates
-
-# 日志
+# ---- 日志 ----
 logs
 *.log
 
-# 文档
+# ---- 评测产物 ----
+# report_*.json 有上下文全文，动辄几十 MB，且包含法规原文。
+# 打进镜像会让镜像体积暴涨，还会把业务数据带进镜像分发链路。
+report_*.json
+eval_runs
+agent1/eval_runs
+*.jsonl.gz
+
+# ---- 文档与开发文件 ----
 *.md
 .trae
 tests
+docs
 
-# Docker 自身
+# ---- 临时脚本（本轮审计用的，不该进仓库更不该进镜像）----
+_audit*.sh
+_audit*.py
+
+# ---- Docker 自身 ----
+# 注意：排除这里不影响 dockerfile: 引用 —— Dockerfile 是构建参数单独传入的，
+# 不走构建上下文的文件筛选。
 deploy/docker
 Dockerfile*
 docker-compose*

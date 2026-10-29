@@ -1,0 +1,48 @@
+# Prometheus 配置：抓取四个服务的 /metrics
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  # 外部标签：所有指标都会带上，便于多环境区分
+  external_labels:
+    env: local
+    project: fire-agents
+
+scrape_configs:
+  # ---- 四个应用服务 ----
+  # 每个服务暴露自己的 /metrics，Prometheus 直接抓。
+  # 用服务名而非 IP：容器重建后 IP 会变，写死 IP 会让抓取静默失败
+  # （Prometheus 对抓取失败只记一条 up=0，不会在启动时报错）。
+  - job_name: agent1
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["agent1:8001"]
+        labels:
+          service: agent1
+
+  - job_name: agent2
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["agent2:8002"]
+        labels:
+          service: agent2
+
+  - job_name: agent3
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["agent3:8003"]
+        labels:
+          service: agent3
+
+  - job_name: gateway
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["gateway:8000"]
+        labels:
+          service: gateway
+
+  # ---- Prometheus 自身 ----
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+        labels:
+          service: prometheus

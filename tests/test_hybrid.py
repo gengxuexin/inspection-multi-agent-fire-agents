@@ -107,8 +107,13 @@ def make_retriever(docs):
     # IDF 表：与 __init__ 同一口径，语料小所以 idf 直接给 1.0
     # （单测只验证"加权覆盖率"的调用链能跑通，不验证权重数值）
     r._idf = {w: 1.0 for toks in r.tokenized for w in set(toks)}
+    # 精排现在自己从 df 计算 idf（不再只读 _idf），
+    # 所以 mock 必须补这两个属性，否则 _rerank 会 AttributeError。
+    r._df = {w: 1 for toks in r.tokenized for w in set(toks)}
+    r._n_docs = max(len(docs), 1)
     r._IDF_MIN = HybridRetriever._IDF_MIN
-    r._IDF_MAX = HybridRetriever._IDF_MAX
+    r._IDF_MAX_RERANK = HybridRetriever._IDF_MAX_RERANK
+    r._IDF_MAX_BM25 = HybridRetriever._IDF_MAX_BM25
     from collections import defaultdict
     r._law_index = defaultdict(dict)
     for d in docs:

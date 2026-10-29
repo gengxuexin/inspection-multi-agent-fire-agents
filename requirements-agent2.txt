@@ -1,0 +1,17 @@
+# Agent2 语音服务专用依赖（体积大，按需安装）
+# 配合 requirements.txt 使用：
+#   pip install -r requirements.txt -r requirements-agent2.txt
+
+# ---- ASR ----
+faster-whisper>=1.0
+vosk>=0.3.45          # 离线备选 ASR
+websocket-client>=1.7 # 讯飞在线 ASR
+
+# ---- TTS ----
+edge-tts>=6.1         # 微软在线 TTS（默认）
+pyttsx3>=2.90         # 本地离线 TTS（兜底）
+dashscope>=1.14         # 阿里云 CosyVoice
+
+# ---- 交互 ----
+gradio>=4.0           # voice_qa_bot 演示界面
+requests>=2.31

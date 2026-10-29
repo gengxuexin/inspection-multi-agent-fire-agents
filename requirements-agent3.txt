@@ -1,0 +1,36 @@
+# Agent3 视觉服务专用依赖（体积大，按需安装）
+# 配合 requirements.txt 使用：
+#   pip install -r requirements.txt -r requirements-agent3.txt
+
+# ---- 目标检测 ----
+# ★ torch **刻意不写在这里**，改为在 Dockerfile 里装 CPU 版：
+#
+#     pip install torch --index-url https://download.pytorch.org/whl/cpu
+#
+#   原因（实测）：默认 torch 会连带装 CUDA 运行时，
+#   agent3 镜像因此到 11.3 GB，其中
+#       nvidia CUDA 运行时  3.2 GB   ← CPU 推理完全用不到
+#       torch 本体          1.2 GB
+#   28% 的镜像是纯浪费：拉取慢、占磁盘、容器冷启动还要解压几 GB 的 .so。
+#
+#   为什么不写进 requirements：pip 在 CUDA 索引找不到 CPU 轮子时
+#   会**静默回退**到默认的 CUDA 版，白装 3.2 GB 且没有任何提示。
+#   用 --index-url 显式指定才可靠。
+#
+#   若将来要 GPU 推理，把 Dockerfile 那行换回普通 torch 即可。
+ultralytics>=8.2      # YOLO；会复用已装好的 torch
+
+# opencv 用 headless 版：容器里没有显示器，
+# 完整版会拖进一堆 GUI 依赖（Qt/GTK，约 200MB）且用不上。
+opencv-python-headless>=4.9
+
+# ---- 百度 OCR ----
+# ★ 刻意不装 baiduocr 包。
+#   agent3/modules/baiduOCR.py 是直接用 requests 调百度 HTTP API 拿 token 再识别，
+#   只依赖 requests（已在 requirements.txt 里），不需要官方 SDK。
+#   曾经在这里写了 baiduocr>=2.0，构建时报
+#   "Could not find a version that satisfies the requirement baiduocr" ——
+#   这个包名是照着文件名猜的，而代码里根本没有这个 import。
+#   教训：**依赖必须来自代码里真实的 import，不能靠名字反推。**
+#   校验：deploy/tools/audit_deps.py 的对比方向是「代码 import → 包」，
+#        而不是「包 → 代码」，后者会把不存在的依赖也带进来。

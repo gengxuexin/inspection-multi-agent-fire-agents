@@ -1,5 +1,10 @@
-# 消防智能执法系统 - 核心依赖
+# 消防智能执法系统 —— 核心依赖（所有服务共用）
 # 安装：pip install -r requirements.txt
+#
+# ★ 这份文件只放「所有服务都需要」或「体积可控」的依赖。
+#   agent2 的 ASR/TTS、agent3 的 YOLO 体积很大（torch 单独就上百 MB），
+#   全放这里会让 gateway 和 agent1 的镜像无谓地膨胀，
+#   因此拆到 requirements-agent2.txt / requirements-agent3.txt 按需安装。
 
 # ---- Web 框架 ----
 fastapi>=0.110
@@ -27,10 +32,17 @@ langchain-text-splitters>=0.2
 faiss-cpu>=1.7.4
 rank-bm25>=0.2.2
 jieba>=0.42
+tqdm>=4.66
+
+# ---- 文档解析 ----
+# ★ pdfplumber 不能少：agent1/document_io.py 在顶层 import 它，
+#   而 server.py 顶层 import document_io —— 缺了它容器会启动即崩（ImportError）。
+pdfplumber>=0.11
 pypdf>=4.0
 python-docx>=1.1
-tqdm>=4.66
+python-pptx>=1.0
 pymupdf>=1.24
+Pillow>=10.0
 
 # ---- LangGraph 编排（P7）----
 langgraph>=0.2
@@ -47,13 +59,20 @@ opentelemetry-exporter-otlp>=1.24
 opentelemetry-instrumentation-fastapi>=0.45b0
 opentelemetry-instrumentation-httpx>=0.45b0
 
+# ---- Prometheus 指标 ----
+# ★ 这个包之前漏了，而 common/metrics.py 做了 ImportError 降级，
+#   所以本地开发完全没察觉 —— 四个服务都能起，
+#   只是 /metrics 静默返回"# prometheus_client not installed"。
+#   一旦容器起来才发现：/metrics 返回 200 但没有任何指标，
+#   Prometheus targets 显示 up，但查不到数据。
+#   教训：**"优雅降级"会把依赖缺失藏起来**，
+#   而依赖缺失应该在构建期就被 preflight 抓出来。
+prometheus-client>=0.20
+
 # ---- 意图分类器（P2）----
 scikit-learn>=1.4
 joblib>=1.3
 
-# ============ Agent2/Agent3 专用（体积大，按需安装） ============
-# faster-whisper>=1.0      # agent2 ASR
-# edge-tts>=6.1            # agent2 TTS
-# vosk>=0.3.45             # agent2 备选 ASR
-# ultralytics>=8.2         # agent3 YOLO
-# opencv-python>=4.9       # agent3 视频
+# ---- OCR ----
+pytesseract>=0.3.10
+pdf2image>=1.17

@@ -1,0 +1,29 @@
+apiVersion: 1
+
+# ★ Grafana 数据源自动配置：不配这个的话，
+#   容器起来后Grafana 里没有 Prometheus 数据源，
+#   看板全是 "No data"，而看不出是配置漏了。
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: true
+    jsonData:
+      timeInterval: 15s          # 与 scrape_interval 对齐，
+                                 # 否则看板在两次抓取之间会显示断点
+      httpMethod: POST
+
+# 看板自动导入：不配这个每次重建容器都要手动导入 JSON
+providers:
+  - name: fire-agents
+    orgId: 1
+    folder: 消防智能执法
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards
+      foldersFromFilesStructure: false

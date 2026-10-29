@@ -1,14 +1,29 @@
 # 消防智能执法系统 · Docker Compose
+#
 # 用法：
-#   基础启动：docker compose up -d redis gateway agent1 agent2 agent3
-#   含 Milvus：docker compose --profile milvus up -d
-#   含可观测：docker compose --profile obs up -d
-#   全量：docker compose --profile milvus --profile obs up -d
+#   基础启动：  ./up.sh              （等价于下面这条）
+#              docker compose up -d redis gateway agent1 agent2 agent3
+#   含 Milvus：  docker compose --profile milvus up -d
+#   含可观测：  docker compose --profile obs up -d
+#   全量：      docker compose --profile milvus --profile obs up -d
+#
+# ★ 关于健康检查的分工（本项目踩过坑，记一下）：
+#   liveness（/health）—— 进程还在不在。失败 = 重启容器。
+#   readiness（/ready）—— 能不能接流量。失败 = 摘流量，等依赖恢复。
+#   两者混用是最常见的误配：外部依赖（Redis/Milvus）抖一下，
+#   liveness 就失败 → 容器被重启 → 但重启根本修不好依赖问题，
+#   反而把一次抖动放大成全部服务反复重启。
+#   所以 gateway 的 liveness 打根路径，不打会连带探测下游的 /agents/health。
+
+# 显式指定项目名。不指定时 compose 用目录名，容器会叫 docker-agent1-1 这种
+# 通用前缀 —— 本机还跑着别的项目，排查端口占用时根本分不清谁是谁。
+name: fire-agents
+
 services:
   # ==================== 基础设施 ====================
   redis:
     image: redis:7-alpine
-    ports: ["6379:6379"]
+    ports: ["${REDIS_PORT:-6379}:6379"]
     volumes: ["redis-data:/data"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -45,13 +60,16 @@ services:
       ETCD_ENDPOINTS: etcd:2379
       MINIO_ADDRESS: minio:9000
     ports: ["19530:19530"]
-    depends_on: [etcd, minio]
+    depends_on:
+      etcd: { condition: service_started }
+      minio: { condition: service_started }
     volumes: ["milvus-data:/var/lib/milvus"]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
       interval: 30s
       timeout: 10s
       retries: 5
+      start_period: 90s
 
   # ==================== 应用服务 ====================
   gateway:
@@ -60,6 +78,9 @@ services:
       dockerfile: deploy/docker/gateway.Dockerfile
       args:
         BASE_IMAGE: ${BASE_IMAGE:-python:3.10-slim}
+        # 与宿主用户对齐，否则 compose 挂载目录全部 Permission denied
+        HOST_UID: ${HOST_UID:-1000}
+        HOST_GID: ${HOST_GID:-1000}
     image: ${REGISTRY:-fire}-gateway:${TAG:-latest}
     env_file: ../../.env
     environment:
@@ -67,11 +88,16 @@ services:
       AGENT2_URL: http://agent2:8002
       AGENT3_URL: http://agent3:8003
       REDIS_URL: redis://redis:6379/0
-    ports: ["8000:8000"]
+    ports: ["${GATEWAY_PORT:-8000}:8000"]
     volumes:
       - ../../logs:/app/logs
     depends_on:
       redis: { condition: service_healthy }
+      agent1: { condition: service_healthy }
+      agent2: { condition: service_healthy }
+      agent3: { condition: service_healthy }
+    # restart: unless-stopped 交给 up.sh 统一控制，不在编排文件里硬编码——
+    # 本地开发时希望崩溃就停，能直接看到 traceback 而不是无限重启掩盖问题。
 
   agent1:
     build:
@@ -79,19 +105,21 @@ services:
       dockerfile: deploy/docker/agent1.Dockerfile
       args:
         BASE_IMAGE: ${BASE_IMAGE:-python:3.10-slim}
+        # 与宿主用户对齐，否则 compose 挂载目录全部 Permission denied
+        HOST_UID: ${HOST_UID:-1000}
+        HOST_GID: ${HOST_GID:-1000}
     image: ${REGISTRY:-fire}-agent1:${TAG:-latest}
     env_file: ../../.env
     environment:
       AGENT1_URL: http://agent1:8001
       REDIS_URL: redis://redis:6379/0
       MILVUS_URI: ${MILVUS_URI:-}
-    ports: ["8001:8001"]
+    ports: ["${AGENT1_PORT:-8001}:8001"]
     volumes:
       - ../../agent1/knowledge_base:/app/agent1/knowledge_base
       - ../../agent1/faiss_full:/app/agent1/faiss_full
       - ../../agent1/templates:/app/agent1/templates
       - ../../agent1/output:/app/agent1/output
-      - ../../agent1/kb_meta.yaml:/app/agent1/kb_meta.yaml
       - ../../logs:/app/logs
     depends_on:
       redis: { condition: service_healthy }
@@ -102,15 +130,20 @@ services:
       dockerfile: deploy/docker/agent2.Dockerfile
       args:
         BASE_IMAGE: ${BASE_IMAGE:-python:3.10-slim}
+        # 与宿主用户对齐，否则 compose 挂载目录全部 Permission denied
+        HOST_UID: ${HOST_UID:-1000}
+        HOST_GID: ${HOST_GID:-1000}
     image: ${REGISTRY:-fire}-agent2:${TAG:-latest}
     env_file: ../../.env
     environment:
       AGENT1_URL: http://agent1:8001
-    ports: ["8002:8002"]
+    ports: ["${AGENT2_PORT:-8002}:8002"]
     volumes:
       - ../../agent1/templates:/app/agent1/templates
       - ../../agent1/output:/app/agent1/output
       - ../../logs:/app/logs
+    depends_on:
+      agent1: { condition: service_healthy }
 
   agent3:
     build:
@@ -118,9 +151,12 @@ services:
       dockerfile: deploy/docker/agent3.Dockerfile
       args:
         BASE_IMAGE: ${BASE_IMAGE:-python:3.10-slim}
+        # 与宿主用户对齐，否则 compose 挂载目录全部 Permission denied
+        HOST_UID: ${HOST_UID:-1000}
+        HOST_GID: ${HOST_GID:-1000}
     image: ${REGISTRY:-fire}-agent3:${TAG:-latest}
     env_file: ../../.env
-    ports: ["8003:8003"]
+    ports: ["${AGENT3_PORT:-8003}:8003"]
     volumes:
       - ../../logs:/app/logs
 
@@ -141,7 +177,8 @@ services:
       NEXTAUTH_SECRET: changeme
       SALT: changeme
     ports: ["3000:3000"]
-    depends_on: [langfuse-db]
+    depends_on:
+      langfuse-db: { condition: service_healthy }
 
   langfuse-db:
     image: postgres:15-alpine
@@ -151,6 +188,60 @@ services:
       POSTGRES_PASSWORD: langfuse
       POSTGRES_DB: langfuse
     volumes: ["langfuse-db-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ==================== 指标与看板（--profile obs）====================
+  # ---- Prometheus：指标存储与查询 ----
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    profiles: ["obs"]
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      # 保留 15 天。本地演示够用；生产要按实际容量调，
+      # 太小会导致看板查不到历史数据（表现为"图突然从昨天开始"）。
+      - "--storage.tsdb.retention.time=15d"
+      - "--web.enable-lifecycle"
+    volumes:
+      - ./../monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    # depends_on 各应用服务，但**刻意不用** condition: service_healthy：
+    #   Prometheus 抓取失败会自动重试，让它等应用健康等于把监控
+    #   变成被依赖对象 —— 应用挂了监控也起不来，恰好在需要监控时失明。
+    depends_on: [agent1, agent2, agent3, gateway]
+
+  # ---- Grafana：看板 ----
+  grafana:
+    image: grafana/grafana:11.2.0
+    profiles: ["obs"]
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      # ★ 生产必须换掉默认值。上线前检查项之一。
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_LOG_LEVEL: warn
+    volumes:
+      # ★ 只挂两个 yml 文件，**不要挂整个 provisioning 目录**。
+      #   挂整个目录会把 Grafana 自带的 dashboards/ datasources/ plugins/
+      #   alerting/ 四个子目录一并覆盖掉（容器里它们不存在），
+      #   结果 Grafana 启动时报：
+      #     can't read dashboard provisioning files from directory
+      #       path=/etc/grafana/provisioning/dashboards: no such file or directory
+      #   看板与数据源都导入不了，而 Grafana 本身仍是 healthy ——
+      #   看起来一切正常，就是没有数据。
+      - ./../monitoring/grafana/provisioning/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - ./../monitoring/grafana/provisioning/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
+      - ./../monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "${GRAFANA_PORT:-3001}:3000"
+    depends_on: [prometheus]
 
 volumes:
   redis-data:
@@ -158,3 +249,5 @@ volumes:
   minio-data:
   milvus-data:
   langfuse-db-data:
+  prometheus-data:
+  grafana-data:

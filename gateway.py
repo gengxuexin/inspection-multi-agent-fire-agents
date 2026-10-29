@@ -40,15 +40,23 @@ from common.router import route, build_route_envelope
 from common.resilience import protected_call, CircuitOpenError
 from common.tasks import get_task_store, new_task_id
 from common.tracing import setup_tracing, trace_span
+from common.metrics_middleware import (
+    install_http_middleware,
+    install_metrics_endpoint,
+)
+
 
 app = FastAPI(title="Fire Agent Gateway")
+
+# ---- Prometheus 指标（指标清单见 common/metrics.py）----
+install_metrics_endpoint(app, service="gateway")
+install_http_middleware(app, service="gateway")
 
 logger = logging.getLogger("fire_agents.gateway")
 
 # 挂载审计中间件 + OpenTelemetry tracing
 install_audit_middleware(app)
 setup_tracing(app)
-
 # ==================== 配置 ====================
 _settings = get_settings()
 AGENT1 = _settings.agent1_url
@@ -61,7 +69,6 @@ def _internal_headers() -> dict:
     """构造 Agent 间内部调用头（X-Internal-Token）。"""
     token = _settings.agent_shared_token
     return {"X-Internal-Token": token} if token else {}
-
 
 # ==================== 请求模型 ====================
 class DispatchReq(BaseModel):
@@ -76,7 +83,6 @@ class TokenReq(BaseModel):
     dept: str = "消防支队"
     role: str = "officer"
     clearance: int = 2
-
 
 # ==================== 降级函数 ====================
 async def rag_fallback(*args, **kwargs):
@@ -94,7 +100,6 @@ async def vision_fallback(*args, **kwargs):
 async def doc_fallback(*args, **kwargs):
     return {"status": "degraded", "message": "文书服务暂不可用，降级为法规 RAG",
             "fallback": "rag"}
-
 
 # ==================== 各路由处理器（带熔断+降级）====================
 async def handle_rag(query: str, top_k: int = 8) -> dict:
@@ -166,7 +171,6 @@ async def handle_doc(query: str) -> dict:
                          headers=_internal_headers())
         return r.json()
 
-
 # ==================== 路由+执行核心 ====================
 @trace_span("gateway.dispatch")
 async def _route_and_execute(req: DispatchReq) -> dict:
@@ -191,13 +195,11 @@ async def _route_and_execute(req: DispatchReq) -> dict:
     return {"status": "success", "routed_to": kind,
             "route": envelope, "result": result}
 
-
 # ==================== 主入口 ====================
 @app.get("/")
 def root():
     return {"service": "Fire Agent Gateway", "status": "ok",
             "agents": {"rag": AGENT1, "voice": AGENT2, "vision": AGENT3}}
-
 
 @app.get("/agents/health")
 async def health():
@@ -213,7 +215,6 @@ async def health():
                 results[name] = f"error: {type(e).__name__}"
     return results
 
-
 # ==================== Token 签发（联调用）====================
 @app.post("/auth/token")
 def issue_token(req: TokenReq):
@@ -223,7 +224,6 @@ def issue_token(req: TokenReq):
         return {"access_token": token, "token_type": "Bearer"}
     except RuntimeError as e:
         return {"status": "error", "message": str(e)}
-
 
 # ==================== 同步 dispatch ====================
 @app.post("/dispatch")
@@ -246,7 +246,6 @@ async def dispatch(req: DispatchReq, user: UserCtx = Depends(get_current_user)):
     except Exception as e:
         logger.exception("[gateway] 请求处理异常")
         return {"status": "error", "message": f"{type(e).__name__}: {e}"}
-
 
 # ==================== 文件上传 dispatch ====================
 @app.post("/dispatch_file")
@@ -302,7 +301,6 @@ async def dispatch_file(
         logger.exception("[gateway] 请求处理异常")
         return {"status": "error", "message": f"{type(e).__name__}: {e}"}
 
-
 # ==================== 异步 dispatch（长任务）====================
 @app.post("/dispatch_async")
 async def dispatch_async(req: DispatchReq,
@@ -332,7 +330,6 @@ async def _run_async_task(task_id: str, req: DispatchReq):
         await store.set_error(task_id, f"{type(e).__name__}: {e}")
         await store.add_event(task_id, "error", {"message": str(e)})
 
-
 @app.get("/tasks/{task_id}")
 async def get_task(task_id: str,
                    user: UserCtx = Depends(get_current_user)):
@@ -342,7 +339,6 @@ async def get_task(task_id: str,
     if rec is None:
         return {"status": "error", "message": f"任务不存在：{task_id}"}
     return rec
-
 
 @app.get("/tasks/{task_id}/events")
 async def task_events(task_id: str,
@@ -368,7 +364,6 @@ async def task_events(task_id: str,
 
     return StreamingResponse(event_gen(), media_type="text/event-stream")
 
-
 # ==================== 多模态综合处理 ====================
 def _resolve_orchestrator():
     """按 ORCHESTRATOR_MODE 选择编排器实现。
@@ -389,13 +384,13 @@ def _resolve_orchestrator():
             logger.warning("[orchestrator] legacy 模式不可用，回退 langgraph")
 
     from orchestrator_langgraph import orchestrate as lg_orchestrate, is_available
+
     if not is_available():
         raise RuntimeError(
             "ORCHESTRATOR_MODE=langgraph 但 langgraph 未安装，"
             "请执行 pip install 'langgraph>=0.2' 'langgraph-checkpoint-sqlite>=2.0'"
         )
     return lg_orchestrate, "langgraph"
-
 
 @app.post("/dispatch_multimodal")
 async def dispatch_multimodal(
@@ -434,7 +429,6 @@ async def dispatch_multimodal(
         return {"status": "error", "message": f"{type(e).__name__}: {e}"}
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
-
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
