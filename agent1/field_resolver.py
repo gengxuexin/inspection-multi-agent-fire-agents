@@ -1,15 +1,15 @@
 """
-logger = logging.getLogger("fire_agents.agent1")
 
 字段三级分类 + 派生值规则。
 - FACT    事实类：从案情明文抽（时间/地点/当事人/违法事实）
 - LEGAL   法律类：RAG 检索本地知识库（法律依据/触犯条款/定性）
 - DERIVED 派生类：规则/默认值/其他字段映射（文号/日期/复议机关/送达日期）
 """
+import logging
+logger = logging.getLogger("fire_agents.agent1")
 import re
 import datetime
 from enum import Enum
-import logging
 
 
 class FieldKind(str, Enum):

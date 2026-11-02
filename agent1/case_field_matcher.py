@@ -1,11 +1,12 @@
 """
-logger = logging.getLogger("fire_agents.agent1")
 
 案情 × 模板字段 匹配。三级分流：
 - FACT    从案情明文抽
 - LEGAL   RAG 检索本地知识库
 - DERIVED 规则/默认值推导
 """
+import logging
+logger = logging.getLogger("fire_agents.agent1")
 import json
 from config import ds_client
 from rag_legal_advisor import (
@@ -223,4 +224,3 @@ def build_review_table(fields: list, extracted: dict, verified: dict,
 
 # 从 field_resolver 导入，供 app.py 使用
 from field_resolver import classify_field
-import logging

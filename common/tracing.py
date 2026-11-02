@@ -1,7 +1,6 @@
 # common/tracing.py
 """可观测性封装：OpenTelemetry Tracing + Langfuse LLM 调用日志。
 
-logger = logging.getLogger("fire_agents.tracing")
 
 设计原则：
 - 全部为可选依赖：opentelemetry / langfuse / fastapi 任一未安装或未配置时优雅降级为 no-op；
@@ -14,11 +13,12 @@ logger = logging.getLogger("fire_agents.tracing")
     get_langfuse_logger().log_llm_call("classify", q, answer, usage={...})
 """
 from __future__ import annotations
+import logging
+logger = logging.getLogger("fire_agents.tracing")
 
 import functools
 import inspect
 from typing import Any, Callable, Optional
-import logging
 
 try:
     from common.config import get_settings

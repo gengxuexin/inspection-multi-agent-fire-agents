@@ -1,5 +1,4 @@
 """
-logger = logging.getLogger("fire_agents.agent1")
 
 Agent2 文书生成 - CLI 主程序（模板驱动 + RAG 法律推理）
 
@@ -9,6 +8,8 @@ Agent2 文书生成 - CLI 主程序（模板驱动 + RAG 法律推理）
     └── 法律字段 → RAG 检索本地知识库 + LLM 归纳
   → LLM 校验 → 回填
 """
+import logging
+logger = logging.getLogger("fire_agents.agent1")
 import os
 import sys
 import traceback
@@ -28,7 +29,6 @@ from case_field_matcher import (
 )
 from rag_legal_advisor import split_fields
 from generate_interview import generate_interview_docx
-import logging
 
 
 # ==================== 目录 ====================

@@ -9,6 +9,8 @@ Agent1 消防法规 + 文书服务
                     → approve 移入 output/official/
                     → reject 记录原因
 """
+import logging
+logger = logging.getLogger("fire_agents.agent1")
 import os
 import sys
 import glob
